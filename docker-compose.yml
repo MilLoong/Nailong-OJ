@@ -1,0 +1,67 @@
+# OJ 后端本地开发依赖（MySQL + Redis + RabbitMQ）——可选
+# 没装 Docker 时请改用本机安装，见 README「方式 A」
+# 已安装 Docker 时，在 NLOJ 目录下执行：docker compose up -d
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: nloj-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: nloj_db
+      MYSQL_USER: nloj
+      MYSQL_PASSWORD: nloj123456
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      - nloj_mysql_data:/var/lib/mysql
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nloj-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - nloj_redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: nloj-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: nloj
+      RABBITMQ_DEFAULT_PASS: nloj123456
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - nloj_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  nloj_mysql_data:
+  nloj_redis_data:
+  nloj_rabbitmq_data:

@@ -1,0 +1,528 @@
+openapi: 3.0.3
+info:
+  title: NLOJ Backend API
+  description: NLOJ 在线判题系统后端 REST API（Phase A 契约文档，供自行实现参考）
+  version: 0.1.0
+  contact:
+    name: NLOJ Project
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: 注册与登录
+  - name: User
+    description: 用户信息
+  - name: Problem
+    description: 题目管理
+  - name: Submission
+    description: 代码提交与判题结果
+
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: 用户注册
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        type: integer
+                        format: int64
+                        description: 新用户 ID
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户登录
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/LoginResponse'
+
+  /api/v1/users/me:
+    get:
+      tags: [User]
+      summary: 获取当前登录用户
+      operationId: currentUser
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/UserVO'
+
+  /api/v1/problems:
+    get:
+      tags: [Problem]
+      summary: 题目列表（分页）
+      operationId: listProblems
+      parameters:
+        - $ref: '#/components/parameters/pageNum'
+        - $ref: '#/components/parameters/pageSize'
+        - name: difficulty
+          in: query
+          schema:
+            type: string
+            enum: [EASY, MEDIUM, HARD]
+        - name: keyword
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PageResultProblemSummary'
+    post:
+      tags: [Problem]
+      summary: 创建题目（admin）
+      operationId: createProblem
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProblemSaveRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        type: integer
+                        format: int64
+
+  /api/v1/problems/{id}:
+    get:
+      tags: [Problem]
+      summary: 题目详情
+      operationId: getProblem
+      parameters:
+        - $ref: '#/components/parameters/problemId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/ProblemVO'
+    put:
+      tags: [Problem]
+      summary: 更新题目（admin）
+      operationId: updateProblem
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/problemId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProblemSaveRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultVoid'
+
+  /api/v1/submissions:
+    get:
+      tags: [Submission]
+      summary: 我的提交列表
+      operationId: listMySubmissions
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/pageNum'
+        - $ref: '#/components/parameters/pageSize'
+        - name: problemId
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/SubmissionStatus'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/PageResultSubmission'
+    post:
+      tags: [Submission]
+      summary: 提交代码
+      operationId: submitCode
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitRequest'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubmitResponse'
+
+  /api/v1/submissions/{id}:
+    get:
+      tags: [Submission]
+      summary: 查询提交详情
+      operationId: getSubmission
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        $ref: '#/components/schemas/SubmissionVO'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    pageNum:
+      name: pageNum
+      in: query
+      schema:
+        type: integer
+        format: int64
+        default: 1
+        minimum: 1
+    pageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        format: int64
+        default: 20
+        minimum: 1
+        maximum: 100
+    problemId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  schemas:
+    Result:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: ok
+        data:
+          nullable: true
+
+    ResultVoid:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              nullable: true
+
+    RegisterRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 6
+          maxLength: 64
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        userId:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+          enum: [user, admin]
+
+    UserVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        username:
+          type: string
+        role:
+          type: string
+        createTime:
+          type: string
+          format: date-time
+
+    ProblemSaveRequest:
+      type: object
+      required: [title, difficulty, description, timeLimit, memoryLimit]
+      properties:
+        title:
+          type: string
+        difficulty:
+          type: string
+          enum: [EASY, MEDIUM, HARD]
+        description:
+          type: string
+        timeLimit:
+          type: integer
+          description: ms
+        memoryLimit:
+          type: integer
+          description: KB
+        visible:
+          type: integer
+          default: 1
+
+    ProblemSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        title:
+          type: string
+        difficulty:
+          type: string
+        timeLimit:
+          type: integer
+        memoryLimit:
+          type: integer
+        visible:
+          type: integer
+        createTime:
+          type: string
+          format: date-time
+
+    ProblemCaseVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        input:
+          type: string
+        output:
+          type: string
+
+    ProblemVO:
+      allOf:
+        - $ref: '#/components/schemas/ProblemSummary'
+        - type: object
+          properties:
+            description:
+              type: string
+            samples:
+              type: array
+              items:
+                $ref: '#/components/schemas/ProblemCaseVO'
+
+    PageResultProblemSummary:
+      type: object
+      properties:
+        pageNum:
+          type: integer
+          format: int64
+        pageSize:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProblemSummary'
+
+    SubmitRequest:
+      type: object
+      required: [problemId, language, code]
+      properties:
+        problemId:
+          type: integer
+          format: int64
+        language:
+          type: string
+          enum: [CPP, JAVA, PYTHON, GO]
+        code:
+          type: string
+
+    SubmitResponse:
+      type: object
+      properties:
+        submissionId:
+          type: integer
+          format: int64
+
+    SubmissionStatus:
+      type: string
+      enum: [PENDING, JUDGING, AC, WA, TLE, MLE, RE, CE, SYSTEM_ERROR]
+
+    SubmissionVO:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        problemId:
+          type: integer
+          format: int64
+        language:
+          type: string
+        code:
+          type: string
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        timeUsed:
+          type: integer
+          nullable: true
+        memoryUsed:
+          type: integer
+          nullable: true
+        judgeInfo:
+          type: string
+          nullable: true
+        createTime:
+          type: string
+          format: date-time
+
+    PageResultSubmission:
+      type: object
+      properties:
+        pageNum:
+          type: integer
+          format: int64
+        pageSize:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/SubmissionVO'
