@@ -1,15 +1,9 @@
 #include "nloj/user/module.h"
 #include "nloj/user/auth_crypto.h"
+#include "nloj/common/mysql.h"
 
 #include <chrono>
-#include <iostream>
 #include <string>
-
-#if __has_include(<mysql/mysql.h>)
-#include <mysql/mysql.h>
-#else
-#include <mysql.h>
-#endif
 
 namespace nloj::user {
 namespace {
@@ -41,64 +35,6 @@ std::int64_t json_get_int64(const std::string& json, const std::string& key) {
     }
 }
 
-// 拼进引号前转义，防止 SQL 注入。缓冲区按 2*n+1 开。
-std::string escape_sql(MYSQL* conn, const std::string& raw) {
-    std::string escaped(raw.size() * 2 + 1, '\0');
-    const auto n = mysql_real_escape_string(
-        conn, escaped.data(), raw.c_str(), static_cast<unsigned long>(raw.size()));
-    escaped.resize(n);
-    return escaped;
-}
-
-void log_mysql_error(MYSQL* conn) {
-    std::cerr << mysql_error(conn) << std::endl;
-}
-
-// SELECT：失败返回 nullptr，成功后调用方 mysql_free_result。
-MYSQL_RES* query_select(MYSQL* conn, const std::string& sql) {
-    if (mysql_query(conn, sql.c_str()) != 0) {
-        log_mysql_error(conn);
-        return nullptr;
-    }
-    MYSQL_RES* result = mysql_store_result(conn);
-    if (result == nullptr) {
-        log_mysql_error(conn);
-    }
-    return result;
-}
-
-// INSERT / UPDATE：没有结果集。
-bool query_exec(MYSQL* conn, const std::string& sql) {
-    if (mysql_query(conn, sql.c_str()) != 0) {
-        log_mysql_error(conn);
-        return 0;
-    }
-    return 1;
-}
-
-// 初始化并连接 MySQL。失败时已 close，调用方不要再 close。
-bool start_mysql(MYSQL& mysql) {
-    if (mysql_init(&mysql) == nullptr) {
-        return 0;
-    }
-    if (!mysql_real_connect(
-            &mysql,
-            "127.0.0.1",
-            "nloj",
-            "nloj123456",
-            "nloj_db",
-            3306,
-            nullptr,
-            0
-        )) {
-        log_mysql_error(&mysql);
-        mysql_close(&mysql);
-        return 0;
-    }
-    mysql_set_character_set(&mysql, "utf8mb4");
-    return 1;
-}
-
 }  // namespace
 
 const char* module_name() {
@@ -116,17 +52,17 @@ std::int64_t register_user(const std::string& username, const std::string& passw
 
     // mysql 初始化、连接
     MYSQL mysql;
-    if (!start_mysql(mysql)) {
+    if (!nloj::common::start_mysql(mysql)) {
         return -1;
     }
 
     // username 查重（转义后拼 SQL，只认未删除用户）
-    const std::string escaped_username = escape_sql(&mysql, username);
+    const std::string escaped_username = nloj::common::escape_sql(&mysql, username);
     const std::string select_sql = "SELECT id FROM `user` WHERE username='"
                                   + escaped_username
                                   + "' AND deleted=0 LIMIT 1";
 
-    MYSQL_RES* select_result = query_select(&mysql, select_sql);
+    MYSQL_RES* select_result = nloj::common::query_select(&mysql, select_sql);
     if (select_result == nullptr) {
         mysql_close(&mysql);
         return -1;
@@ -146,11 +82,11 @@ std::int64_t register_user(const std::string& username, const std::string& passw
     }
 
     // 插入用户数据（只写 username / password_hash，其余列用表默认值）
-    const std::string escaped_hash = escape_sql(&mysql, password_hash);
+    const std::string escaped_hash = nloj::common::escape_sql(&mysql, password_hash);
     const std::string insert_sql = "INSERT INTO `user` (username, password_hash) VALUES ('"
                                   + escaped_username + "', '" + escaped_hash + "')";
 
-    if (!query_exec(&mysql, insert_sql)) {
+    if (!nloj::common::query_exec(&mysql, insert_sql)) {
         mysql_close(&mysql);
         return -1;
     }
@@ -166,17 +102,17 @@ LoginResult login_user(const std::string& username, const std::string& password)
 
     // mysql 初始化、连接
     MYSQL mysql;
-    if (!start_mysql(mysql)) {
+    if (!nloj::common::start_mysql(mysql)) {
         return {};
     }
 
     // 只查未删除用户；有行才说明账号有效（不必再读 deleted 列）
-    const std::string escaped_username = escape_sql(&mysql, username);
+    const std::string escaped_username = nloj::common::escape_sql(&mysql, username);
     const std::string select_sql = "SELECT id, password_hash, role, create_time FROM `user` WHERE username='"
                                   + escaped_username
                                   + "' AND deleted=0 LIMIT 1";
 
-    MYSQL_RES* select_result = query_select(&mysql, select_sql);
+    MYSQL_RES* select_result = nloj::common::query_select(&mysql, select_sql);
     if (select_result == nullptr) {
         mysql_close(&mysql);
         return {};
@@ -265,7 +201,7 @@ AuthUser get_current_user(const std::string& user_id) {
 
     // mysql 初始化、连接
     MYSQL mysql;
-    if (!start_mysql(mysql)) {
+    if (!nloj::common::start_mysql(mysql)) {
         return {};
     }
 
@@ -274,7 +210,7 @@ AuthUser get_current_user(const std::string& user_id) {
                                   + std::to_string(id)
                                   + " AND deleted=0 LIMIT 1";
 
-    MYSQL_RES* select_result = query_select(&mysql, select_sql);
+    MYSQL_RES* select_result = nloj::common::query_select(&mysql, select_sql);
     if (select_result == nullptr) {
         mysql_close(&mysql);
         return {};

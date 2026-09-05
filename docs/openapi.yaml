@@ -1,16 +1,20 @@
 openapi: 3.0.3
 info:
   title: NLOJ Backend API
-  description: NLOJ 在线判题系统后端 REST API（Phase A 契约文档，供自行实现参考）
+  description: |
+    NLOJ 在线判题系统后端 REST API。
+    浏览器打开 `/api/docs` 可调试。需要登录的接口：先调 login，再点 Authorize 填 token。
   version: 0.1.0
   contact:
     name: NLOJ Project
 
 servers:
-  - url: http://localhost:8080
-    description: Local development
+  - url: /
+    description: 当前页面同源（避免 localhost 与 127.0.0.1 被浏览器当成跨域）
 
 tags:
+  - name: Ops
+    description: 健康检查
   - name: Auth
     description: 注册与登录
   - name: User
@@ -21,6 +25,47 @@ tags:
     description: 代码提交与判题结果
 
 paths:
+  /api/v1/health:
+    get:
+      tags: [Ops]
+      summary: 健康检查
+      operationId: health
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Result'
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        properties:
+                          status:
+                            type: string
+                          mysql:
+                            type: string
+                          redis:
+                            type: string
+                          rabbitmq:
+                            type: string
+                          cache:
+                            type: object
+                            description: 题目详情缓存计数（进程内）
+                            properties:
+                              total:
+                                type: integer
+                              l1Hit:
+                                type: integer
+                              redisHit:
+                                type: integer
+                              mysqlLoad:
+                                type: integer
+                              hitRate:
+                                type: number
+
   /api/v1/auth/register:
     post:
       tags: [Auth]
@@ -78,6 +123,8 @@ paths:
       operationId: currentUser
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/authorization'
       responses:
         '200':
           description: OK
@@ -126,6 +173,8 @@ paths:
       operationId: createProblem
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/authorization'
       requestBody:
         required: true
         content:
@@ -172,6 +221,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/authorization'
         - $ref: '#/components/parameters/problemId'
       requestBody:
         required: true
@@ -195,6 +245,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/authorization'
         - $ref: '#/components/parameters/pageNum'
         - $ref: '#/components/parameters/pageSize'
         - name: problemId
@@ -224,6 +275,8 @@ paths:
       operationId: submitCode
       security:
         - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/authorization'
       requestBody:
         required: true
         content:
@@ -251,6 +304,7 @@ paths:
       security:
         - bearerAuth: []
       parameters:
+        - $ref: '#/components/parameters/authorization'
         - name: id
           in: path
           required: true
@@ -278,6 +332,17 @@ components:
       bearerFormat: JWT
 
   parameters:
+    authorization:
+      name: Authorization
+      in: header
+      required: true
+      description: |
+        登录接口返回的 token。整段写成：
+        Bearer <token>
+        Bearer 后面有一个空格，不要只贴 token。
+      schema:
+        type: string
+      example: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9
     pageNum:
       name: pageNum
       in: query

@@ -1,6 +1,6 @@
 # NLOJ — 在线判题系统后端
 
-**NLOJ**（Online Judge）面向腾讯后台开发校招的 **C++ 后端**练手项目。当前处于 **Phase B**：CMake 骨架与 `nl-user`（PBKDF2 + JWT）已落地，HTTP / 题目 / 判题待续。
+**NLOJ**（Online Judge）面向腾讯后台开发校招的 **C++ 后端**练手项目。**Phase C 已完成**：核心链路、Redis 题目缓存与读题压测均已落地。
 
 ## 一句话亮点（简历用）
 
@@ -15,7 +15,7 @@
 | HTTP   | cpp-httplib              | 轻量 REST，无 Boost 依赖            |
 | JSON   | nlohmann/json            | 请求/响应序列化                      |
 | 数据库    | MySQL 8 + libmysqlclient | 连接池，查询转义/预处理防注入               |
-| 缓存     | Redis + hiredis          | Token/题目缓存                    |
+| 缓存     | Redis（RESP 直连）           | 题目详情 String 缓存；连不上 6379 则跳过 |
 | 消息队列   | RabbitMQ + rabbitmq-c    | 异步判题、削峰填谷                     |
 | 鉴权     | jwt-cpp + OpenSSL        | HS256 JWT                     |
 | 密码     | PBKDF2-HMAC-SHA256       | OpenSSL 实现                    |
@@ -43,8 +43,11 @@ MyProject/
     │   ├── architecture.md
     │   ├── api.md
     │   ├── interview.md
+    │   ├── bench-report.md
     │   └── openapi.yaml
-    ├── nl-common/              # 公共模块：Result、错误码、枚举
+    ├── scripts/
+    │   └── bench.ps1              # 读题压测；原始数字写 bench-report.generated.md
+    ├── nl-common/              # 公共模块：工具类、错误码/枚举、Result/分页、第三方与基础设施封装、配置常量
     ├── nl-user/                # 用户模块：注册、登录、鉴权
     ├── nl-problem/             # 题目模块：CRUD、用例
     ├── nl-submit/              # 提交模块：创建提交、发 MQ
@@ -194,7 +197,16 @@ cmake --build --preset debug --target nloj_user_crypto_test
 .\build\bin\Debug\nloj_user_crypto_test.exe
 ```
 
-骨架可执行文件：`build\bin\Debug\nloj_api.exe`。跑起来应打印模块名列表。
+骨架可执行文件：`build\bin\Debug\nloj_api.exe`。跑起来应打印模块名列表。浏览器打开 [http://127.0.0.1:8080/api/docs](http://127.0.0.1:8080/api/docs) 是 Swagger UI（C++ 没有 Knife4j，契约仍是 `docs/openapi.yaml`）。登录后点 **Authorize** 填 token 即可在页面上试接口。
+
+读题压测（需 `nloj_api` 已在 8080、库里至少一道题）：
+
+```powershell
+cmake --build --preset debug --target nloj_api_bench
+powershell -File scripts/bench.ps1
+```
+
+中文结论在 [docs/bench-report.md](docs/bench-report.md)。复跑脚本另写 `docs/bench-report.generated.md`。对照关缓存用请求头 `X-NLOJ-Skip-Cache: 1`。
 
 
 ## 核心功能
@@ -213,7 +225,9 @@ cmake --build --preset debug --target nloj_user_crypto_test
 | -------------------------------------------- | --------------------- |
 | [docs/architecture.md](docs/architecture.md) | 架构图、模块职责、判题时序、扩展点     |
 | [docs/api.md](docs/api.md)                   | REST 接口清单、请求/响应示例、错误码 |
+| [docs/impl-mapping.md](docs/impl-mapping.md) | API → 业务函数 → 表字段对照（含「领域」说明） |
 | [docs/interview.md](docs/interview.md)       | 校招 STAR 叙述、高频面试题      |
+| [docs/bench-report.md](docs/bench-report.md) | 本机压测 QPS / P99 / 缓存命中率 |
 | [docs/openapi.yaml](docs/openapi.yaml)       | OpenAPI 3 机器可读契约      |
 | [sql/schema.sql](sql/schema.sql)             | 数据库表结构与索引             |
 
@@ -235,25 +249,29 @@ cmake --build --preset debug --target nloj_user_crypto_test
 
 - [x] CMake 多模块骨架（`nloj` 父工程 + `nl-*` 子模块）
 - [x] 用户注册登录（PBKDF2 + JWT；`nl-user` 领域逻辑 + crypto 单元测试）
-- [ ] 题目 CRUD + 分页
-- [ ] 提交 + RabbitMQ 异步判题
-- [ ] Docker 沙箱（先支持 C++，可扩展 Python/Go/Java）
-- [ ] HTTP 接入（`nl-api` 路由 / 统一错误码）
+- [x] 题目 CRUD + 分页（`nl-problem` 领域逻辑 + DB 联调测试）
+- [x] 提交（create/get/list + MQ 投递；`nl-submit` DB 联调测试）
+- [x] RabbitMQ 异步判题（`rabbitmq-c`；连不上 5672 降级进程内队列；`nloj_common_mq_test`）
+- [x] Docker 沙箱（CPP；无 Docker 时本机 g++ 降级；`nl-judge` DB 联调测试）
+- [x] HTTP 接入（`nl-api` cpp-httplib 路由 / 统一 code-message-data；`nloj_api_http_test`；Swagger UI `/api/docs`）
+- [x] HTTP 全链路集成（进程内起服务打注册/建题/提交/判题；`nloj_api_e2e_test`）
 
 
 
 ### Phase C：工程化与亮点
 
-- Redis 题目缓存（防穿透/击穿）
-- 提交列表分页、按题目/状态筛选
-- 管理员权限拦截
-- 压测报告、单元测试
+- [x] Redis 题目缓存（`nloj:problem:{id}` String JSON；空值短 TTL 防穿透；SET NX 锁 + 进程内 L1 防击穿；TTL 抖动防雪崩；更新 DEL）
+- [x] 提交列表分页、按题目/状态筛选（`list_my_submissions` + HTTP `problemId` / `status`）
+- [x] 管理员权限拦截（建题 / 改题；无权限 `40101`）
+- [x] 压测 + 故障注入数据（`nloj_api_bench` + `scripts/bench.ps1`；报告 [bench-report.md](docs/bench-report.md)）
+- [x] 单元测试 / 联调测试（crypto / DB / MQ / Redis / HTTP JSON / `nloj_api_e2e_test`）
 
 
 
 ### Phase D（可选）：拆分演进
 
-- 判题进程独立部署、水平扩展
+- 多节点判题机：竞争消费做负载均衡；心跳 / 超时回收做自愈
+- 判题进程独立部署（`nloj_judge_node`）；有状态用类、跨模块用接口、纯逻辑用自由函数（见 [architecture.md §11](docs/architecture.md)）
 - 引入反向代理做统一鉴权与限流
 
 

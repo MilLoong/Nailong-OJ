@@ -1,6 +1,6 @@
-# 第一阶段：CMake 多模块骨架。不引入 httplib / MySQL 等第三方库。
-cmake_minimum_required(VERSION 3.20)
-project(nloj VERSION 0.1.0 LANGUAGES CXX)
+# C++20 多模块：nl-common（MySQL / RabbitMQ）+ 领域模块 + nl-api（httplib）。
+cmake_minimum_required(VERSION 3.22)
+project(nloj VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

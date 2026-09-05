@@ -63,7 +63,7 @@ flowchart TB
 
 | 模块 | 职责 | 依赖 |
 |------|------|------|
-| `nl-common` | 统一响应 `Result`、错误码、枚举、配置、MySQL 连接池、Redis、MQ | 无业务依赖 |
+| `nl-common` | **公共模块**：工具类、错误码/枚举、Result/分页、MySQL 等封装、配置常量 | 无业务依赖 |
 | `nl-user` | 用户实体/Service、密码哈希、JWT | nl-common |
 | `nl-problem` | 题目 CRUD、用例管理、题目缓存 | nl-common |
 | `nl-submit` | 创建提交、状态查询、发送判题消息 | nl-common, nl-problem |
@@ -270,7 +270,7 @@ Routing:  nloj.judge.submit
 flowchart LR
     PhaseA[Phase A 文档] --> PhaseB[Phase B 单体跑通]
     PhaseB --> PhaseC[Phase C 缓存/限流/测试]
-    PhaseC --> PhaseD[Phase D 判题独立进程]
+    PhaseC --> PhaseD[Phase D 多节点判题机]
 ```
 
 **拆分顺序建议**（若演进）：
@@ -278,6 +278,45 @@ flowchart LR
 1. 先拆 **nl-judge**（资源消耗大、需独立扩缩容）
 2. 再拆 **nl-problem**（读多，便于单独缓存）
 3. 引入反向代理统一鉴权与限流
+
+### 11.1 Phase B vs Phase D：怎么用 OOP
+
+**结论：有状态实体用类；跨模块依赖用接口（抽象类）；无状态纯逻辑用自由函数。**
+
+| 阶段 | 做法 |
+|------|------|
+| Phase B（当前） | 领域以 `namespace` + `struct` + 自由函数为主（如 `list_problems`）；沙箱可先有 `ISandbox` / `JudgeStrategy` 接口 |
+| Phase D | 判题机拆成独立进程 `nloj_judge_node`；进程内用类管生命周期与连接 |
+
+多节点 = **多进程**（每台机器起一个 `nloj_judge_node`），不是单进程里搞全局单例。`main` 里栈上构造一个 `JudgeNode` 即可。
+
+### 11.2 有生命周期 → 类（`nl-judge`）
+
+| 实体 | 为何是类 |
+|------|----------|
+| `JudgeNode` | 聚合消费、沙箱、心跳、结果回写；`run()` / `shutdown()` |
+| `TaskConsumer` | 持有 AMQP 连接/信道；prefetch、ACK/NACK |
+| `SandboxRunner` | Docker 容器池（warm pool）创建/回收 |
+| `HeartbeatReporter` | Redis 心跳 TTL；节点注册/注销 |
+| `ResultPublisher` | 回写 MySQL（可选缓存状态） |
+
+`JudgeNode` 拥有子组件，`shutdown()` 按序：停消费 → 排空沙箱 → 停心跳 → flush 结果。线程归属在对应类内，避免跨类乱操作裸 `std::thread`。
+
+### 11.3 要替换 / 要测 → 接口
+
+- `ITaskConsumer` ← `RabbitMQConsumer`（头文件不暴露 `amqp.h`，实现放 `.cpp`）
+- `ISandboxRunner` ← `DockerSandbox`（可换 gVisor 等，只加实现类）
+
+便于 mock 单测，也避免第三方库污染公共头文件。接口只一层，不做深继承树。
+
+### 11.4 无资源、无副作用 → 自由函数
+
+输出比对、状态机文案、JSON 解析等放在 `nloj::judge`（或匿名命名空间），不绑连接成员。`Submission` / `TestCase` 继续用 `struct` 当 DTO。
+
+### 11.5 多节点负载与自愈（落地含义）
+
+- **负载均衡**：多个 `nloj_judge_node` 竞争消费同一队列（prefetch 可按机器配置）
+- **自愈**：未 ACK 消息在 Worker 宕机后重回队列；心跳 TTL 过期表示节点下线；卡住任务超时回收再入队
 
 ---
 
@@ -288,5 +327,5 @@ flowchart LR
 | 可用性 | 判题失败可重试；MQ 消费幂等（按 submissionId 去重） |
 | 性能 | 题目列表 P99 < 100ms（缓存命中）；提交接口 < 50ms |
 | 安全 | 沙箱隔离、SQL 转义/预处理防注入、密码 PBKDF2 |
-| 可观测 | 日志、判题耗时（可选 Prometheus exporter） |
+| 可观测 | 日志、`GET /health` 的 `data.cache` 命中计数；压测见 [bench-report.md](bench-report.md) |
 | 资源管理 | RAII 管理 MySQL/Redis/MQ 连接，避免泄漏 |

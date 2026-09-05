@@ -1,0 +1,33 @@
+{
+    "configurations": [
+        {
+            "name": "Win64",
+            "includePath": [
+                "${workspaceFolder}/nl-common/include",
+                "${workspaceFolder}/nl-user/include",
+                "${workspaceFolder}/nl-problem/include",
+                "${workspaceFolder}/nl-submit/include",
+                "${workspaceFolder}/nl-judge/include",
+                "${workspaceFolder}/nl-api/src",
+                "C:/MySQL/mysql-9.2.0-winx64/include",
+                "${workspaceFolder}/third_party/mysql-connector-c-6.1.11-winx64/include",
+                "C:/anaconda/anaconda3/Library/include",
+                "${workspaceFolder}/third_party/rabbitmq-c/include",
+                "${workspaceFolder}/build/_deps/rabbitmq-c-build/include",
+                "${workspaceFolder}/third_party/cpp-httplib",
+                "${workspaceFolder}/third_party"
+            ],
+            "defines": [
+                "NOMINMAX",
+                "WIN32_LEAN_AND_MEAN",
+                "AMQP_STATIC"
+            ],
+            "windowsSdkVersion": "10.0.26100.0",
+            "compilerPath": "cl.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++20",
+            "intelliSenseMode": "windows-msvc-x64"
+        }
+    ],
+    "version": 4
+}

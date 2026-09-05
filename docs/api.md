@@ -2,7 +2,9 @@
 
 > 基础路径：`http://localhost:8080`  
 > 版本前缀：`/api/v1`  
-> 机器可读契约：[openapi.yaml](./openapi.yaml)
+> 机器可读契约：[openapi.yaml](./openapi.yaml)  
+> 可视化调试：服务起来后打开 [http://127.0.0.1:8080/api/docs](http://127.0.0.1:8080/api/docs)（Swagger UI）  
+> **写 C++ / 落库时**：本文只定 HTTP；**每条接口对应哪个 C++ 函数**见 [impl-mapping.md](./impl-mapping.md)。骨架只写流程注释、不写实现：skill `nloj-domain-skeleton`。
 
 ---
 
@@ -489,7 +491,14 @@ GET /api/v1/health
     "status": "UP",
     "mysql": "UP",
     "redis": "UP",
-    "rabbitmq": "UP"
+    "rabbitmq": "UP",
+    "cache": {
+      "total": 0,
+      "l1Hit": 0,
+      "redisHit": 0,
+      "mysqlLoad": 0,
+      "hitRate": 0
+    }
   }
 }
 ```

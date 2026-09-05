@@ -41,11 +41,12 @@
 ### Result（结果）
 
 - 本地 Docker Compose 一键启动 MySQL/Redis/RabbitMQ
+- 本机压测 `GET /problems/{id}`：缓存命中约 **1379 QPS**、P99 **35ms**、命中率 100%；强制回源约 244 QPS、P99 69ms（约 5.6×）
 - 提交接口目标 P99 < 50ms（不含判题）
 - 支持 C++ 判题（可扩展 Python/Go/Java）
 - 完整 OpenAPI 契约
 
-（数字可按你实际压测结果替换）
+（压测细节见 [bench-report.md](bench-report.md)）
 
 ---
 
@@ -160,7 +161,7 @@
 1. **限流**：令牌桶保护提交接口
 2. **WebSocket**：判题结果推送，减少轮询
 3. **Special Judge**：输出多解题目
-4. **压测**：wrk / hey 对 GET /problems 压测，输出 QPS 与缓存命中率
+4. **压测**：`nloj_api_bench` 对 `GET /problems/{id}` 压测，输出 QPS / P99 / 缓存命中率（见 `docs/bench-report.md`）
 5. **CI**：GitHub Actions 编译 + 单元测试
 
 ---

@@ -3,15 +3,36 @@
 #include "nloj/problem/module.h"
 #include "nloj/submit/module.h"
 #include "nloj/user/module.h"
+#include "server.h"
 
 #include <iostream>
+#include <thread>
+
+namespace {
+
+constexpr const char* kHost = "0.0.0.0";
+constexpr int kPort = 8080;  // 与 api.md 一致
+
+}  // namespace
 
 int main() {
-    std::cout << "nloj skeleton\n"
+    httplib::Server svr;
+    nloj::api::register_http_routes(svr);
+
+    std::thread worker(nloj::api::judge_worker_loop);
+    worker.detach();
+
+    std::cout << "nloj_api listening on http://" << kHost << ":" << kPort << '\n'
+              << "  docs  http://127.0.0.1:" << kPort << "/api/docs\n"
               << "  " << nloj::common::module_name() << '\n'
               << "  " << nloj::user::module_name() << '\n'
               << "  " << nloj::problem::module_name() << '\n'
               << "  " << nloj::submit::module_name() << '\n'
               << "  " << nloj::judge::module_name() << '\n';
+
+    if (!svr.listen(kHost, kPort)) {
+        std::cerr << "listen failed on port " << kPort << '\n';
+        return 1;
+    }
     return 0;
 }
