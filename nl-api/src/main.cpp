@@ -19,11 +19,14 @@ int main() {
     httplib::Server svr;
     nloj::api::register_http_routes(svr);
 
-    std::thread worker(nloj::api::judge_worker_loop);
-    worker.detach();
+    if (nloj::api::embed_judge_worker_enabled()) {
+        std::thread worker(nloj::api::judge_worker_loop);
+        worker.detach();
+    }
 
     std::cout << "nloj_api listening on http://" << kHost << ":" << kPort << '\n'
               << "  docs  http://127.0.0.1:" << kPort << "/api/docs\n"
+              << "  embedWorker=" << (nloj::api::embed_judge_worker_enabled() ? "1" : "0") << '\n'
               << "  " << nloj::common::module_name() << '\n'
               << "  " << nloj::user::module_name() << '\n'
               << "  " << nloj::problem::module_name() << '\n'

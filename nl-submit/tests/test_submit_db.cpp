@@ -66,6 +66,7 @@ std::int64_t make_problem(int visible) {
 void drain_judge_queue() {
     nloj::common::JudgeTaskMessage dump;
     while (nloj::common::try_pop_judge_task(dump)) {
+        nloj::common::ack_judge_task(dump);
     }
 }
 

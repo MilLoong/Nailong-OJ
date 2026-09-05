@@ -1,6 +1,6 @@
 # NLOJ — 在线判题系统后端
 
-**NLOJ**（Online Judge）面向腾讯后台开发校招的 **C++ 后端**练手项目。**Phase C 已完成**：核心链路、Redis 题目缓存与读题压测均已落地。
+**NLOJ**（Online Judge）面向腾讯后台开发校招的 **C++ 后端**练手项目。**A～D 路线图已完成**：单体可跑通全链路，也可拆出 `nloj_judge_node` 多进程竞争消费。
 
 ## 一句话亮点（简历用）
 
@@ -47,11 +47,13 @@ MyProject/
     │   └── openapi.yaml
     ├── scripts/
     │   └── bench.ps1              # 读题压测；原始数字写 bench-report.generated.md
+    ├── deploy/
+    │   └── nginx.conf             # 反向代理 + 提交限流示例
     ├── nl-common/              # 公共模块：工具类、错误码/枚举、Result/分页、第三方与基础设施封装、配置常量
     ├── nl-user/                # 用户模块：注册、登录、鉴权
     ├── nl-problem/             # 题目模块：CRUD、用例
     ├── nl-submit/              # 提交模块：创建提交、发 MQ
-    ├── nl-judge/               # 判题模块：消费 MQ、沙箱、比对
+    ├── nl-judge/               # 判题模块：消费 MQ、沙箱、比对；可执行文件 nloj_judge_node
     └── nl-api/                 # 启动模块：HTTP 路由、配置
 ```
 
@@ -208,6 +210,17 @@ powershell -File scripts/bench.ps1
 
 中文结论在 [docs/bench-report.md](docs/bench-report.md)。复跑脚本另写 `docs/bench-report.generated.md`。对照关缓存用请求头 `X-NLOJ-Skip-Cache: 1`。
 
+独立判题进程（需 RabbitMQ；可与 API 同时开多个，竞争同一队列）：
+
+```powershell
+.\build\bin\Debug\nloj_judge_node.exe
+# API 不再内嵌 Worker 时：
+$env:NLOJ_EMBED_WORKER = "0"
+.\build\bin\Debug\nloj_api.exe
+```
+
+`GET /api/v1/health` 的 `judgeNodes` 是 Redis 心跳未过期的节点 id。反向代理示例见 `deploy/nginx.conf`。
+
 
 ## 核心功能
 
@@ -270,11 +283,13 @@ powershell -File scripts/bench.ps1
 
 ### Phase D（可选）：拆分演进
 
-- 多节点判题机：竞争消费做负载均衡；心跳 / 超时回收做自愈
-- 判题进程独立部署（`nloj_judge_node`）；有状态用类、跨模块用接口、纯逻辑用自由函数（见 [architecture.md §11](docs/architecture.md)）
-- 引入反向代理做统一鉴权与限流
+- [x] 多节点判题机：多进程竞争消费同一 RabbitMQ 队列；Redis 心跳 TTL；`JUDGING` 超时改回 PENDING 再入队（`reclaim_stale_judging`）
+- [x] 判题进程独立部署（`nloj_judge_node` / `JudgeNode`）；API 默认仍内嵌 Worker，`NLOJ_EMBED_WORKER=0` 关掉
+- [x] 反向代理示例（`deploy/nginx.conf`：入口转发 + `/api/v1/submissions` 限流；JWT 仍在 API）
 
 
+
+路线图到此结束。后续若继续，属于加分项（限流进进程、WebSocket 推结果、SPJ 等），不是未完成的 Phase。
 
 ## License
 

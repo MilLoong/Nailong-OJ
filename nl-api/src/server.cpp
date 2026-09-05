@@ -5,6 +5,7 @@
 #include "nloj/common/mysql.h"
 #include "nloj/common/redis.h"
 #include "nloj/judge/module.h"
+#include "nloj/judge/node.h"
 #include "nloj/problem/module.h"
 #include "nloj/submit/module.h"
 #include "nloj/user/module.h"
@@ -360,6 +361,12 @@ void register_http_routes(httplib::Server& svr) {
             cache["hitRate"] = 0.0;
         }
         data["cache"] = cache;
+        data["embedWorker"] = embed_judge_worker_enabled();
+        nlohmann::json nodes = nlohmann::json::array();
+        for (const auto& id : nloj::judge::list_judge_nodes()) {
+            nodes.push_back(id);
+        }
+        data["judgeNodes"] = nodes;
         write_body(res, nloj::api::json_ok(data));
     });
 
@@ -612,11 +619,29 @@ void register_http_routes(httplib::Server& svr) {
     });
 }
 
+int embed_judge_worker_enabled() {
+#ifdef _WIN32
+    char buf[8];
+    const DWORD n = GetEnvironmentVariableA("NLOJ_EMBED_WORKER", buf, 8);
+    if (n == 1 && buf[0] == '0') {
+        return 0;
+    }
+    return 1;
+#else
+    const char* raw = std::getenv("NLOJ_EMBED_WORKER");
+    if (raw != nullptr && raw[0] == '0') {
+        return 0;
+    }
+    return 1;
+#endif
+}
+
 void judge_worker_loop() {
     for (;;) {
         nloj::common::JudgeTaskMessage task;
         nloj::common::wait_pop_judge_task(task);
         nloj::judge::run_judge_task(task.submission_id);
+        nloj::common::ack_judge_task(task);
     }
 }
 

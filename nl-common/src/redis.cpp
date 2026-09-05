@@ -122,6 +122,7 @@ struct Reply {
     int is_status_ok;   // +OK
     std::int64_t num;
     std::string bulk;
+    std::vector<std::string> elems;  // 数组（KEYS）
 };
 
 int read_reply(Reply& out) {
@@ -130,6 +131,7 @@ int read_reply(Reply& out) {
     out.is_status_ok = 0;
     out.num = 0;
     out.bulk.clear();
+    out.elems.clear();
 
     std::string line;
     if (!recv_line(line) || line.empty()) {
@@ -167,6 +169,25 @@ int read_reply(Reply& out) {
         }
         out.ok = 1;
         out.bulk = std::move(body);
+        return 1;
+    }
+    if (kind == '*') {
+        const int n = std::stoi(rest);
+        if (n < 0) {
+            out.ok = 1;
+            out.is_null = 1;
+            return 1;
+        }
+        for (int i = 0; i < n; ++i) {
+            Reply one;
+            if (!read_reply(one)) {
+                return 0;
+            }
+            if (!one.is_null && !one.bulk.empty()) {
+                out.elems.push_back(one.bulk);
+            }
+        }
+        out.ok = 1;
         return 1;
     }
     return 0;
@@ -317,6 +338,19 @@ int redis_del(const std::string& key) {
     if (!exec({"DEL", key}, reply)) {
         return 0;
     }
+    return 1;
+}
+
+int redis_keys(const std::string& pattern, std::vector<std::string>& out) {
+    if (pattern.empty()) {
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(g_mu);
+    Reply reply;
+    if (!exec({"KEYS", pattern}, reply)) {
+        return 0;
+    }
+    out = reply.elems;
     return 1;
 }
 

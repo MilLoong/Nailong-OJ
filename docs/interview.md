@@ -45,6 +45,7 @@
 - 提交接口目标 P99 < 50ms（不含判题）
 - 支持 C++ 判题（可扩展 Python/Go/Java）
 - 完整 OpenAPI 契约
+- 判题可拆独立进程 `nloj_judge_node`：多进程竞争消费、Redis 心跳、超时 JUDGING 回收
 
 （压测细节见 [bench-report.md](bench-report.md)）
 

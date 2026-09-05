@@ -2,6 +2,8 @@
 #include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 #include "nloj/judge/module.h"
+#include "nloj/judge/node.h"
+#include "nloj/common/redis.h"
 #include "nloj/problem/module.h"
 #include "nloj/submit/module.h"
 
@@ -82,6 +84,7 @@ int insert_case(std::int64_t problem_id,
 void drain_judge_queue() {
     nloj::common::JudgeTaskMessage dump;
     while (nloj::common::try_pop_judge_task(dump)) {
+        nloj::common::ack_judge_task(dump);
     }
 }
 
@@ -108,6 +111,7 @@ void test_judge_flow() {
     expect_true("pop judge task", nloj::common::try_pop_judge_task(task));
     expect_true("judge task id match", task.submission_id == ac_id);
     expect_true("run_judge_task AC ok", nloj::judge::run_judge_task(ac_id) == 1);
+    nloj::common::ack_judge_task(task);
 
     const nloj::submit::SubmissionDetail ac =
         nloj::submit::get_submission(ac_id, user_id, "user");
@@ -134,6 +138,63 @@ void test_judge_flow() {
     const nloj::submit::SubmissionDetail ce =
         nloj::submit::get_submission(ce_id, user_id, "user");
     expect_true("CE status", ce.status == "CE");
+
+    expect_true("rerun AC is idempotent", nloj::judge::run_judge_task(ac_id) == 1);
+    const nloj::submit::SubmissionDetail ac_again =
+        nloj::submit::get_submission(ac_id, user_id, "user");
+    expect_true("rerun keeps AC", ac_again.status == "AC");
+}
+
+void test_reclaim_and_heartbeat() {
+    drain_judge_queue();
+    const std::int64_t user_id = insert_user(unique_name("ut_reclaim_u_"));
+    const std::int64_t problem_id = make_problem();
+    expect_true("reclaim user", user_id > 0);
+    expect_true("reclaim problem", problem_id > 0);
+    expect_true("reclaim case", insert_case(problem_id, "1 2", "3", 1));
+
+    const std::int64_t sid = nloj::submit::create_submission(
+        user_id, problem_id, "CPP", "int main(){return 0;}\n");
+    expect_true("reclaim submission", sid > 0);
+    drain_judge_queue();
+
+    MYSQL mysql;
+    expect_true("reclaim mysql", nloj::common::start_mysql(mysql) ? 1 : 0);
+    const std::string stale_sql = "UPDATE submission SET status='JUDGING', "
+                                  "update_time=DATE_SUB(NOW(), INTERVAL 400 SECOND) WHERE id="
+                                 + std::to_string(sid);
+    expect_true("mark stale JUDGING", nloj::common::query_exec(&mysql, stale_sql) ? 1 : 0);
+    mysql_close(&mysql);
+
+    const int n = nloj::judge::reclaim_stale_judging(180);
+    expect_true("reclaim count >= 1", n >= 1);
+
+    const nloj::submit::SubmissionDetail after =
+        nloj::submit::get_submission(sid, user_id, "user");
+    expect_true("reclaim back to PENDING", after.status == "PENDING");
+
+    int found_sid = 0;
+    nloj::common::JudgeTaskMessage again;
+    while (nloj::common::try_pop_judge_task(again)) {
+        if (again.submission_id == sid) {
+            found_sid = 1;
+        }
+        nloj::common::ack_judge_task(again);
+    }
+    expect_true("reclaim republished", found_sid);
+
+    if (nloj::common::redis_using()) {
+        const std::string nid = "ut-node-1";
+        expect_true("heartbeat write", nloj::judge::write_judge_heartbeat(nid, 30));
+        int found = 0;
+        for (const auto& id : nloj::judge::list_judge_nodes()) {
+            if (id == nid) {
+                found = 1;
+            }
+        }
+        expect_true("heartbeat listed", found);
+        nloj::common::redis_del("nloj:judge:node:" + nid);
+    }
 }
 
 }  // namespace
@@ -141,6 +202,7 @@ void test_judge_flow() {
 int main() {
     // 判题联调 → 汇总退出码
     test_judge_flow();
+    test_reclaim_and_heartbeat();
     if (g_failed) {
         std::cerr << "nl-judge db tests failed (检查 MySQL / Docker 或 g++)\n";
         return EXIT_FAILURE;

@@ -23,6 +23,7 @@ void expect_true(const char* name, int ok) {
 void drain_judge_queue() {
     nloj::common::JudgeTaskMessage dump;
     while (nloj::common::try_pop_judge_task(dump)) {
+        nloj::common::ack_judge_task(dump);
     }
 }
 
@@ -55,6 +56,7 @@ void test_try_pop_roundtrip() {
     expect_true("roundtrip submission_id", out.submission_id == 10001);
     expect_true("roundtrip problem_id", out.problem_id == 7);
     expect_true("roundtrip language", out.language == "CPP");
+    nloj::common::ack_judge_task(out);
 
     nloj::common::JudgeTaskMessage empty;
     expect_true("queue empty after pop", !nloj::common::try_pop_judge_task(empty));
@@ -77,6 +79,7 @@ void test_wait_pop() {
     expect_true("wait_pop submission_id", out.submission_id == 20002);
     expect_true("wait_pop problem_id", out.problem_id == 8);
     expect_true("wait_pop language", out.language == "CPP");
+    nloj::common::ack_judge_task(out);
 }
 
 }  // namespace

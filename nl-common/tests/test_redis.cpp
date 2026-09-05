@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -33,6 +34,22 @@ void test_string_roundtrip() {
     expect_true("miss after del again", !nloj::common::redis_get(key, miss));
 }
 
+void test_keys() {
+    const std::string key = "nloj:ut:redis:keys";
+    nloj::common::redis_del(key);
+    expect_true("keys set", nloj::common::redis_set_ex(key, "1", 30));
+    std::vector<std::string> keys;
+    expect_true("keys ok", nloj::common::redis_keys("nloj:ut:redis:keys", keys));
+    int found = 0;
+    for (const auto& one : keys) {
+        if (one == key) {
+            found = 1;
+        }
+    }
+    expect_true("keys contains", found);
+    nloj::common::redis_del(key);
+}
+
 void test_set_nx() {
     const std::string key = "nloj:ut:redis:lock";
     nloj::common::redis_del(key);
@@ -50,6 +67,7 @@ int main() {
     }
     test_string_roundtrip();
     test_set_nx();
+    test_keys();
     if (g_failed) {
         std::cerr << "nl-common redis tests failed\n";
         return EXIT_FAILURE;

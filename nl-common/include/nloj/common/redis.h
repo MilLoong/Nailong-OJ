@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace nloj::common {
 
@@ -20,5 +21,8 @@ int redis_set_nx_ex(const std::string& key, const std::string& value, int ttl_se
 
 // DEL。key 不存在也视为成功。Redis 不可用返回 0。
 int redis_del(const std::string& key);
+
+// KEYS pattern。成功 1（out 可为空）；Redis 不可用返回 0。
+int redis_keys(const std::string& pattern, std::vector<std::string>& out);
 
 }  // namespace nloj::common

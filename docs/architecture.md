@@ -285,8 +285,8 @@ flowchart LR
 
 | 阶段 | 做法 |
 |------|------|
-| Phase B（当前） | 领域以 `namespace` + `struct` + 自由函数为主（如 `list_problems`）；沙箱可先有 `ISandbox` / `JudgeStrategy` 接口 |
-| Phase D | 判题机拆成独立进程 `nloj_judge_node`；进程内用类管生命周期与连接 |
+| Phase B | 领域以 `namespace` + `struct` + 自由函数为主（如 `list_problems`）；沙箱可先有 `ISandbox` / `JudgeStrategy` 接口 |
+| Phase D（当前） | 判题机可独立进程 `nloj_judge_node`（`JudgeNode` + Redis 心跳）；API 默认同进程 Worker，`NLOJ_EMBED_WORKER=0` 关掉 |
 
 多节点 = **多进程**（每台机器起一个 `nloj_judge_node`），不是单进程里搞全局单例。`main` 里栈上构造一个 `JudgeNode` 即可。
 

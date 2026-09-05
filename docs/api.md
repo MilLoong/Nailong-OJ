@@ -498,7 +498,9 @@ GET /api/v1/health
       "redisHit": 0,
       "mysqlLoad": 0,
       "hitRate": 0
-    }
+    },
+    "embedWorker": 1,
+    "judgeNodes": []
   }
 }
 ```

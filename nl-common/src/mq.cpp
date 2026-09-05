@@ -125,6 +125,7 @@ int parse_string_field(const std::string& json, const char* key, std::string& ou
 
 int parse_json(const std::string& json, JudgeTaskMessage& out) {
     JudgeTaskMessage tmp;
+    tmp.delivery_tag = 0;
     if (!parse_int_field(json, "submissionId", tmp.submission_id)) {
         return 0;
     }
@@ -324,14 +325,14 @@ int rabbit_try_pop(JudgeTaskMessage& out) {
     }
     amqp_destroy_message(&message);
 
-    amqp_basic_ack(
-        g_conn, 1, delivery_tag, 0
-    );
-    amqp_maybe_release_buffers(g_conn);
-
     if (!parse_json(json, out)) {
+        amqp_basic_ack(
+            g_conn, 1, delivery_tag, 0
+        );
+        amqp_maybe_release_buffers(g_conn);
         return 0;  // 毒消息已 ACK，当作没取到
     }
+    out.delivery_tag = delivery_tag;
     return 1;
 }
 
@@ -418,6 +419,20 @@ void wait_pop_judge_task(JudgeTaskMessage& out) {
         g_queue.pop();
         return;
     }
+}
+
+void ack_judge_task(const JudgeTaskMessage& msg) {
+    if (msg.delivery_tag == 0) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_mu);
+    if (!g_use_rabbit || g_conn == nullptr) {
+        return;
+    }
+    amqp_basic_ack(
+        g_conn, 1, msg.delivery_tag, 0
+    );
+    amqp_maybe_release_buffers(g_conn);
 }
 
 bool mq_using_rabbit() {

@@ -25,7 +25,8 @@
 | `POST /api/v1/submissions` | `nl-submit` | `create_submission` | `int64` submission id |
 | `GET /api/v1/submissions/{id}` | `nl-submit` | `get_submission` | `SubmissionDetail` |
 | `GET /api/v1/submissions` | `nl-submit` | `list_my_submissions` | `SubmissionPage` |
-| （无 HTTP，MQ Worker） | `nl-judge` | `run_judge_task` | `int`：`1` 成功 / `0` 失败 |
+| （无 HTTP，MQ Worker） | `nl-judge` | `run_judge_task` / `JudgeNode::run` | `int`：`1` 成功 / `0` 失败 |
+| （无 HTTP，超时自愈） | `nl-judge` | `reclaim_stale_judging` | 回收条数 |
 | `GET /api/v1/health` | `nl-api` | （路由内联即可） | 不进领域模块 |
 
 鉴权辅助（无独立业务 URL，供 `nl-api` 拦截器调用）：

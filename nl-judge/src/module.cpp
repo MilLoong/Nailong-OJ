@@ -1,5 +1,6 @@
 #include "nloj/judge/module.h"
 #include "nloj/judge/sandbox.h"
+#include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 
 #include <memory>
@@ -54,7 +55,13 @@ int run_judge_task(std::int64_t submission_id) {
     const std::int64_t problem_id = std::stoll(sub_row[1]);
     const std::string language = sub_row[2] != nullptr ? sub_row[2] : "";
     const std::string code = sub_row[3] != nullptr ? sub_row[3] : "";
+    const std::string cur_status = sub_row[4] != nullptr ? sub_row[4] : "";
     mysql_free_result(sub_result);
+    if (cur_status == "AC" || cur_status == "WA" || cur_status == "TLE" || cur_status == "MLE"
+     || cur_status == "RE" || cur_status == "CE" || cur_status == "SYSTEM_ERROR") {
+        mysql_close(&mysql);
+        return 1;  // 已出终态，重投递幂等
+    }
     if (language.empty() || code.empty()) {
         mysql_close(&mysql);
         return 0;
@@ -177,6 +184,70 @@ int run_judge_task(std::int64_t submission_id) {
     const int ok = write_verdict("AC", max_time, ac_info);
     mysql_close(&mysql);
     return ok;
+}
+
+int reclaim_stale_judging(int older_than_sec) {
+    // 查出超时 JUDGING → 乐观改回 PENDING → 重新入队
+
+    if (older_than_sec <= 0) {
+        return 0;
+    }
+
+    MYSQL mysql;
+    if (!nloj::common::start_mysql(mysql)) {
+        return 0;
+    }
+
+    const std::string select_sql = "SELECT id, problem_id, language FROM submission "
+                                   "WHERE status='JUDGING' AND update_time < DATE_SUB(NOW(), INTERVAL "
+                                  + std::to_string(older_than_sec)
+                                  + " SECOND)";
+    MYSQL_RES* result = nloj::common::query_select(&mysql, select_sql);
+    if (result == nullptr) {
+        mysql_close(&mysql);
+        return 0;
+    }
+
+    struct StaleRow {
+        std::int64_t id;
+        std::int64_t problem_id;
+        std::string language;
+    };
+    std::vector<StaleRow> rows;
+    while (MYSQL_ROW row = mysql_fetch_row(result)) {
+        if (row[0] == nullptr || row[1] == nullptr || row[2] == nullptr) {
+            continue;
+        }
+        StaleRow one;
+        one.id = std::stoll(row[0]);
+        one.problem_id = std::stoll(row[1]);
+        one.language = row[2];
+        rows.push_back(one);
+    }
+    mysql_free_result(result);
+
+    int reclaimed = 0;
+    for (const auto& one : rows) {
+        const std::string update_sql = "UPDATE submission SET status='PENDING', "
+                                       "judge_info='reclaimed stale JUDGING' WHERE id="
+                                      + std::to_string(one.id)
+                                      + " AND status='JUDGING'";
+        if (!nloj::common::query_exec(&mysql, update_sql)) {
+            continue;
+        }
+        if (mysql_affected_rows(&mysql) == 0) {
+            continue;
+        }
+        nloj::common::JudgeTaskMessage task;
+        task.submission_id = one.id;
+        task.problem_id = one.problem_id;
+        task.language = one.language;
+        if (nloj::common::publish_judge_task(task)) {
+            ++reclaimed;
+        }
+    }
+    mysql_close(&mysql);
+    return reclaimed;
 }
 
 }  // namespace nloj::judge

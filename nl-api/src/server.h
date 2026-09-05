@@ -13,4 +13,7 @@ void register_http_routes(httplib::Server& svr);
 // 阻塞消费判题队列。调用方放到独立线程。
 void judge_worker_loop();
 
+// 是否在 API 进程内嵌 Worker。环境变量 NLOJ_EMBED_WORKER=0 时关闭（改由 nloj_judge_node 消费）。
+int embed_judge_worker_enabled();
+
 }  // namespace nloj::api
