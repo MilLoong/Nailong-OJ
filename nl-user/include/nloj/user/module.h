@@ -1,5 +1,7 @@
 #pragma once
 
+#include "nloj/common/error.h"
+
 #include <cstdint>
 #include <string>
 
@@ -21,15 +23,20 @@ struct LoginResult {
     AuthUser user;
 };
 
-// 注册。username 3-32 且唯一，password 6-64。
-// 成功返回新用户 id；用户名已存在等业务错误由实现抛出。
-std::int64_t register_user(const std::string& username, const std::string& password);
+// 注册。username 3-32、字母数字下划线且唯一，password 6-64。
+// 成功返回新用户 id；失败返回 -1，并通过 err 给出原因。
+std::int64_t register_user(const std::string& username,
+                           const std::string& password,
+                           nloj::common::AppError* err = nullptr);
 
 // 登录。校验账号密码后签发 JWT。
-LoginResult login_user(const std::string& username, const std::string& password);
+// 失败返回空 token，并通过 err 给出原因（错密为 WrongPassword）。
+LoginResult login_user(const std::string& username,
+                       const std::string& password,
+                       nloj::common::AppError* err = nullptr);
 
 // 校验 JWT。给 nl-api 拦截器用：从 Header 取出 token 后调用。
-// 成功返回 token 内的用户信息；无效或过期则抛出未登录错误。
+// 成功返回 token 内的用户信息；无效或过期返回 id==0。
 AuthUser verify_token(const std::string& token);
 
 // 按用户 id 查当前用户资料。id 来自 verify_token，不是 HTTP 直接传入。

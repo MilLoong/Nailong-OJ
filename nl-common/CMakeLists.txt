@@ -82,7 +82,7 @@ if(NOT EXISTS "${NLOJ_JSON_HPP}")
     endif()
 endif()
 
-add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp src/config.cpp)
+add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp src/config.cpp src/error.cpp)
 target_include_directories(nl-common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
