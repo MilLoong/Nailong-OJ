@@ -10,7 +10,10 @@ find_package(OpenSSL REQUIRED)
 
 # 密码 / JWT（无 MySQL，可供单元测试单独链接）
 add_library(nl-user-crypto src/auth_crypto.cpp)
-target_include_directories(nl-user-crypto PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(nl-user-crypto PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party
+)
 target_link_libraries(nl-user-crypto PUBLIC OpenSSL::Crypto)
 
 add_library(nl-user src/module.cpp)
