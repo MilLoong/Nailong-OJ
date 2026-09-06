@@ -15,18 +15,23 @@
                 "${workspaceFolder}/third_party/rabbitmq-c/include",
                 "${workspaceFolder}/build/_deps/rabbitmq-c-build/include",
                 "${workspaceFolder}/third_party/cpp-httplib",
+                "${workspaceFolder}/third_party/nlohmann",
                 "${workspaceFolder}/third_party"
             ],
             "defines": [
                 "NOMINMAX",
                 "WIN32_LEAN_AND_MEAN",
-                "AMQP_STATIC"
+                "AMQP_STATIC",
+                "_CRT_SECURE_NO_WARNINGS",
+                "NLOJ_OPENAPI_PATH=\"${workspaceFolder}/docs/openapi.yaml\""
             ],
             "windowsSdkVersion": "10.0.26100.0",
             "compilerPath": "cl.exe",
             "cStandard": "c17",
             "cppStandard": "c++20",
-            "intelliSenseMode": "windows-msvc-x64"
+            "intelliSenseMode": "windows-msvc-x64",
+            "configurationProvider": "ms-vscode.cmake-tools",
+            "mergeConfigurations": true
         }
     ],
     "version": 4

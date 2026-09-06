@@ -34,7 +34,7 @@ const char* module_name() {
 std::int64_t register_user(const std::string& username,
                            const std::string& password,
                            nloj::common::AppError* err) {
-    // 校验长度与字符集 → 查重 username → PBKDF2 哈希 → INSERT → 返回 insert_id
+    // 校验长度与字符集 -> 查重 username -> PBKDF2 哈希 -> INSERT -> 返回 insert_id
 
     // 校验长度与字符集
     if (username.size() < 3 || username.size() > 32
@@ -93,7 +93,7 @@ std::int64_t register_user(const std::string& username,
 LoginResult login_user(const std::string& username,
                        const std::string& password,
                        nloj::common::AppError* err) {
-    // 按 username 查库 → 比对密码哈希 → 签发 HS256 JWT（payload: uid/role/name）
+    // 按 username 查库 -> 比对密码哈希 -> 签发 HS256 JWT（payload: uid/role/name）
 
     nloj::common::MysqlConn conn;
     if (!conn.ok()) {
@@ -145,7 +145,7 @@ LoginResult login_user(const std::string& username,
 }
 
 AuthUser verify_token(const std::string& token) {
-    // 用 jwt_secret 验签、查过期时间 → 解析 uid/role → 填 AuthUser
+    // 用 jwt_secret 验签、查过期时间 -> 解析 uid/role -> 填 AuthUser
 
     std::string payload_json;
     if (!crypto::verify_hs256_signature(

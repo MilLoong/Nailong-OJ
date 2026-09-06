@@ -728,7 +728,7 @@ int write_job_files(const SandboxJudgeRequest& request,
                     const std::filesystem::path& root,
                     JobFiles& job,
                     std::string* err) {
-    // 写 runner / 用户源 / 用例 / extra → 拼编译附加命令与 runner 启动行
+    // 写 runner / 用户源 / 用例 / extra -> 拼编译附加命令与 runner 启动行
     const std::string type = problem_type_of(request);
     const std::string mode = judge_mode_of(request);
     const int case_count = static_cast<int>(request.inputs.size());
@@ -977,7 +977,7 @@ public:
     }
 
     SandboxJudgeResult judge(const SandboxJudgeRequest& request) override {
-        // 写作业文件 → 容器内编译 runner+用户(+checker) → 单容器跑用例 → SPJ
+        // 写作业文件 -> 容器内编译 runner+用户(+checker) -> 单容器跑用例 -> SPJ
         SandboxJudgeResult out;
         out.status = "SYSTEM_ERROR";
         out.error_text = "sandbox run failed";

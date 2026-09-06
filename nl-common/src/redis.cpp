@@ -289,7 +289,7 @@ void ensure_backend() {
 }
 
 int exec(const std::vector<std::string>& args, Reply& reply) {
-    // 探测/重连 → 发命令 → 读回复；失败则标记不可用并进入重连冷却
+    // 探测/重连 -> 发命令 -> 读回复；失败则标记不可用并进入重连冷却
 
     ensure_backend();
     if (!g_use_redis || g_sock == kInvalid) {

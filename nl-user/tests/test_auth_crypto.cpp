@@ -22,7 +22,7 @@ void expect_true(const char* name, int ok) {
     }
 }
 
-// 哈希非空 → 正确密码通过 → 错误密码拒绝 → 残缺串拒绝。
+// 哈希非空 -> 正确密码通过 -> 错误密码拒绝 -> 残缺串拒绝。
 void test_password_roundtrip() {
     const std::string hash = nloj::user::crypto::hash_password("secret123");
     expect_true("hash_password non-empty", !hash.empty());
@@ -31,7 +31,7 @@ void test_password_roundtrip() {
     expect_true("reject truncated hash", !nloj::user::crypto::verify_password("secret123", "pbkdf2$1$aa"));
 }
 
-// 签发 → 验签拿 payload → 校验 claims → 篡改后应失败。
+// 签发 -> 验签拿 payload -> 校验 claims -> 篡改后应失败。
 void test_jwt_roundtrip() {
     const std::string token = nloj::user::crypto::sign_hs256_jwt(42, "alice", "user", kTestSecret);
     expect_true("sign_hs256_jwt non-empty", !token.empty());
@@ -79,7 +79,7 @@ void test_empty_secret() {
 }  // namespace
 
 int main() {
-    // 密码往返 → JWT 往返 → 空 secret 拒绝 → 汇总退出码
+    // 密码往返 -> JWT 往返 -> 空 secret 拒绝 -> 汇总退出码
     test_password_roundtrip();
     test_jwt_roundtrip();
     test_empty_secret();

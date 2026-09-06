@@ -125,7 +125,7 @@ JudgeNode::~JudgeNode() {
 }
 
 void JudgeNode::run() {
-    // 心跳 → 循环：超时回收 → 取任务 → 判题 → ACK
+    // 心跳 -> 循环：超时回收 -> 取任务 -> 判题 -> ACK
 
     stop_.store(0);
     hb_.start();

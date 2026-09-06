@@ -250,7 +250,7 @@ void test_negative(httplib::Client& cli, const std::string& user_token) {
 }
 
 void test_happy_path(httplib::Client& cli) {
-    // health → 注册登录 → admin 建题+用例 → 提交 A+B → 轮询终态 → list
+    // health -> 注册登录 -> admin 建题+用例 -> 提交 A+B -> 轮询终态 -> list
     const httplib::Result health = cli.Get("/api/v1/health");
     nlohmann::json j;
     expect_true("health http 200", health && health -> status == 200);

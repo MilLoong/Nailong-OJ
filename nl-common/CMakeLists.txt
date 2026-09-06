@@ -1,5 +1,4 @@
-# 公共模块：工具类、错误码/枚举、Result/分页、第三方与基础设施封装、配置常量
-# 当前已落地 MySQL 小工具（mysql.h）；其余按 Phase 推进。
+# 公共模块：配置、错误码、MySQL 连接池、Redis、RabbitMQ
 # 优先本机 MySQL 9 自带客户端；否则用 third_party Connector/C。
 set(NLOJ_MYSQL_ROOT "C:/MySQL/mysql-9.2.0-winx64")
 if(NOT EXISTS "${NLOJ_MYSQL_ROOT}/include/mysql.h")
@@ -107,10 +106,20 @@ add_test(NAME common_mq COMMAND nloj_common_mq_test)
 add_executable(nloj_common_redis_test tests/test_redis.cpp)
 target_link_libraries(nloj_common_redis_test PRIVATE nl-common)
 add_test(NAME common_redis COMMAND nloj_common_redis_test)
+add_executable(nloj_common_config_test tests/test_config.cpp)
+target_link_libraries(nloj_common_config_test PRIVATE nl-common)
+add_test(NAME common_config COMMAND nloj_common_config_test)
+add_executable(nloj_common_error_test tests/test_error.cpp)
+target_link_libraries(nloj_common_error_test PRIVATE nl-common)
+add_test(NAME common_error COMMAND nloj_common_error_test)
 if(WIN32)
     get_filename_component(_nloj_mysql_lib_dir "${NLOJ_MYSQL_LIBRARY}" DIRECTORY)
     set_tests_properties(common_mq PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
     set_tests_properties(common_redis PROPERTIES
+        ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
+    set_tests_properties(common_config PROPERTIES
+        ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
+    set_tests_properties(common_error PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
 endif()

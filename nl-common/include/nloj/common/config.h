@@ -4,7 +4,9 @@
 
 namespace nloj::common {
 
-// 运行时配置。默认与本机开发环境一致；可被 config.json / 环境变量覆盖。
+/**
+ * @brief 运行时配置。默认与本机开发环境一致；可被 config.json / 环境变量覆盖。
+ */
 struct AppConfig {
     std::string http_host = "0.0.0.0";
     int http_port = 8080;
@@ -26,10 +28,14 @@ struct AppConfig {
     std::string rabbit_password = "nloj123456";
 };
 
-// 首次调用时加载：可选 JSON（NLOJ_CONFIG 或 ./config.json）→ 环境变量覆盖。
+/**
+ * @brief 首次调用时加载：可选 JSON（NLOJ_CONFIG 或 ./config.json）-> 环境变量覆盖。
+ */
 const AppConfig& app_config();
 
-// 测试用：清掉缓存，下次 app_config() 重新读。
+/**
+ * @brief 测试用：清掉缓存，下次 app_config() 重新读。
+ */
 void reset_app_config();
 
 }  // namespace nloj::common

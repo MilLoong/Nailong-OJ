@@ -98,7 +98,7 @@ void drain_judge_queue() {
     }
 }
 
-// 非法 id → 提交+消费 MQ → AC / WA / CE。
+// 非法 id -> 提交+消费 MQ -> AC / WA / CE。
 void test_judge_flow() {
     drain_judge_queue();
     expect_true("reject id<=0", nloj::judge::run_judge_task(0) == 0);
@@ -372,7 +372,7 @@ void test_communication() {
 }  // namespace
 
 int main() {
-    // 判题联调 → 汇总退出码
+    // 判题联调 -> 汇总退出码
     test_judge_flow();
     test_reclaim_and_heartbeat();
     test_languages();

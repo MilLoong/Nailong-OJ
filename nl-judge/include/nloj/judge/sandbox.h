@@ -6,49 +6,64 @@
 
 namespace nloj::judge {
 
-// 一次判题请求：编译代码后，在单个沙箱（容器）里按顺序跑完全部用例。
-// inputs 按题目 sort_order 排序，用例序号从 1 起。
+/**
+ * @brief 一次判题请求：编译后在单个沙箱里按顺序跑完全部用例。
+ *
+ * inputs 按题目 sort_order 排序，用例序号从 1 起。
+ */
 struct SandboxJudgeRequest {
-    std::string language;      // CPP | C | PYTHON | JAVA
-    std::string code;          // 待判代码
-    int time_limit_ms;         // 单个用例的运行超时
-    int memory_limit_kb;       // 单个用例内存上限（Docker --memory）
-    std::vector<std::string> inputs;  // 全部用例输入
-    std::string problem_type;  // STANDARD | INTERACTIVE | COMMUNICATION；空=STANDARD
-    std::string judge_mode;    // EXACT | SPJ；空=EXACT
-    std::string extra_code;    // SPJ checker / 交互器 / 通信管理器
-    std::vector<std::string> expecteds;  // SPJ 用的标准输出（与 inputs 对齐）
+    std::string language;      ///< CPP | C | PYTHON | JAVA
+    std::string code;          ///< 待判代码
+    int time_limit_ms;         ///< 单个用例的运行超时
+    int memory_limit_kb;       ///< 单个用例内存上限（Docker --memory）
+    std::vector<std::string> inputs;  ///< 全部用例输入
+    std::string problem_type;  ///< STANDARD | INTERACTIVE | COMMUNICATION；空=STANDARD
+    std::string judge_mode;    ///< EXACT | SPJ；空=EXACT
+    std::string extra_code;    ///< SPJ checker / 交互器 / 通信管理器
+    std::vector<std::string> expecteds;  ///< SPJ 用的标准输出（与 inputs 对齐）
 };
 
-// 单个用例的运行结果。verdict: OK | WA | TLE | MLE | RE | SE
+/**
+ * @brief 单个用例的运行结果。
+ */
 struct SandboxCaseResult {
-    int index;                 // 用例序号，从 1 起，与 inputs 对应
-    std::string verdict;       // 运行结论
-    int time_used_ms;          // 容器内实测耗时
-    int memory_used_kb;        // 子进程 ru_maxrss；测不到为 -1
-    std::string stdout_text;   // 实际输出（STANDARD+EXACT 时宿主侧比对）
+    int index;                 ///< 用例序号，从 1 起，与 inputs 对应
+    std::string verdict;       ///< OK | WA | TLE | MLE | RE | SE
+    int time_used_ms;          ///< 容器内实测耗时
+    int memory_used_kb;        ///< 子进程 ru_maxrss；测不到为 -1
+    std::string stdout_text;   ///< 实际输出（STANDARD+EXACT 时宿主侧比对）
 };
 
-// 判题结果。status: OK | CE | SYSTEM_ERROR
-// status=OK 时 cases 与 inputs 顺序对应；首个失败用例后不再有后续用例。
+/**
+ * @brief 判题结果。
+ *
+ * status=OK 时 cases 与 inputs 顺序对应；首个失败用例后不再有后续用例。
+ */
 struct SandboxJudgeResult {
-    std::string status;                // OK=编译过且已跑；CE/SYSTEM_ERROR 见 error_text
-    std::string error_text;            // CE 编译错误 / SYSTEM_ERROR 原因（截断）
-    std::vector<SandboxCaseResult> cases;  // 顺序与 inputs 对应
+    std::string status;                ///< OK=编译过且已跑；CE / SYSTEM_ERROR 见 error_text
+    std::string error_text;            ///< CE 编译错误 / SYSTEM_ERROR 原因（截断）
+    std::vector<SandboxCaseResult> cases;  ///< 顺序与 inputs 对应
 };
 
-// 判题沙箱：编译一次 + 单容器按顺序跑完全部用例，容器内逐用例计时并记录内存。
+/**
+ * @brief 判题沙箱：编译一次 + 单容器按顺序跑完全部用例。
+ */
 class JudgeSandbox {
 public:
     virtual ~JudgeSandbox() = default;
     virtual SandboxJudgeResult judge(const SandboxJudgeRequest& request) = 0;
 };
 
-// 按语言选沙箱：Docker 镜像缺 Python/Java 时退回本机。
+/**
+ * @brief 按语言选沙箱：Docker 镜像缺 Python/Java 时退回本机。
+ */
 std::unique_ptr<JudgeSandbox> make_sandbox();
 std::unique_ptr<JudgeSandbox> make_sandbox_for(const std::string& language);
 
-// 去尾空白后精确比对。相等返回 1。
+/**
+ * @brief 去尾空白后精确比对。
+ * @return 相等返回 1
+ */
 int judge_outputs_match(const std::string& expected, const std::string& actual);
 
 }  // namespace nloj::judge

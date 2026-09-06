@@ -241,7 +241,7 @@ ProblemPage list_problems(std::int64_t page_num,
                           std::int64_t page_size,
                           const std::string& difficulty,
                           const std::string& keyword) {
-    // 拼过滤条件 → COUNT total → SELECT 分页列表（不含题面）→ 填 ProblemPage
+    // 拼过滤条件 -> COUNT total -> SELECT 分页列表（不含题面）-> 填 ProblemPage
 
     // 校验分页（页码从 1 起，每页最多 100）
     if (page_num < 1 || page_size < 1 || page_size > 100) {
@@ -322,7 +322,7 @@ ProblemPage list_problems(std::int64_t page_num,
 
 
 ProblemDetail load_problem_from_db(std::int64_t id) {
-    // 按 id 查题目 → 查 is_sample=1 的用例 → 填 ProblemDetail
+    // 按 id 查题目 -> 查 is_sample=1 的用例 -> 填 ProblemDetail
 
     // mysql 初始化、连接
     nloj::common::MysqlConn conn;
@@ -385,7 +385,7 @@ ProblemDetail load_problem_from_db(std::int64_t id) {
 }
 
 ProblemDetail get_problem(std::int64_t id, int skip_cache) {
-    // L1 → Redis String → 互斥锁重建 → MySQL → 回填（空值短 TTL）
+    // L1 -> Redis String -> 互斥锁重建 -> MySQL -> 回填（空值短 TTL）
 
     if (id <= 0) {
         return {};
@@ -448,7 +448,7 @@ ProblemDetail get_problem(std::int64_t id, int skip_cache) {
 }
 
 std::int64_t create_problem(const CreateProblemRequest& req, nloj::common::AppError* err) {
-    // 校验字段 → INSERT problem → 返回 insert_id
+    // 校验字段 -> INSERT problem -> 返回 insert_id
 
     CreateProblemRequest norm = req;
     if (norm.title.empty() || norm.title.size() > 256 || norm.description.empty()
@@ -496,7 +496,7 @@ std::int64_t create_problem(const CreateProblemRequest& req, nloj::common::AppEr
 }
 
 int update_problem(std::int64_t id, const CreateProblemRequest& req, nloj::common::AppError* err) {
-    // 校验字段 → 按 id UPDATE → 返回是否影响到行
+    // 校验字段 -> 按 id UPDATE -> 返回是否影响到行
 
     // 校验字段
     CreateProblemRequest norm = req;

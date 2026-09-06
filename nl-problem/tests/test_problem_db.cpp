@@ -41,7 +41,7 @@ int insert_sample_case(std::int64_t problem_id) {
     return ok;
 }
 
-// 非法 create → 合法 create → list 能搜到 → get 含样例 → update → 再 get。
+// 非法 create -> 合法 create -> list 能搜到 -> get 含样例 -> update -> 再 get。
 void test_problem_crud_flow() {
     nloj::problem::CreateProblemRequest bad;
     bad.title = "";
@@ -121,7 +121,7 @@ void test_problem_crud_flow() {
 }  // namespace
 
 int main() {
-    // 题目 CRUD 联调 → 汇总退出码
+    // 题目 CRUD 联调 -> 汇总退出码
     test_problem_crud_flow();
     if (g_failed) {
         std::cerr << "nl-problem db tests failed (检查 MySQL 是否启动且 nloj/nloj_db 已就绪)\n";

@@ -1,4 +1,4 @@
-# C++20 多模块：nl-common（MySQL / RabbitMQ）+ 领域模块 + nl-api（httplib）。
+# C++20 多模块：nl-common（MySQL / Redis / RabbitMQ）+ 领域模块 + nl-api（httplib）。
 cmake_minimum_required(VERSION 3.22)
 project(nloj VERSION 0.1.0 LANGUAGES C CXX)
 

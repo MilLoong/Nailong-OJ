@@ -20,7 +20,7 @@ std::int64_t create_submission(std::int64_t user_id,
                                const std::string& language,
                                const std::string& code,
                                nloj::common::AppError* err) {
-    // 校验题目存在且可见 → INSERT PENDING → 发判题消息 → 返回 submission_id
+    // 校验题目存在且可见 -> INSERT PENDING -> 发判题消息 -> 返回 submission_id
 
     // 基本校验（语言放行 CPP/C/PYTHON/JAVA；代码超限按参数错误拒绝）
     if (user_id <= 0 || problem_id <= 0 || code.empty()
@@ -85,7 +85,7 @@ std::int64_t create_submission(std::int64_t user_id,
 SubmissionDetail get_submission(std::int64_t id,
                                 std::int64_t viewer_user_id,
                                 const std::string& viewer_role) {
-    // 按 id 查 submission → 校验本人或 admin → 填 SubmissionDetail
+    // 按 id 查 submission -> 校验本人或 admin -> 填 SubmissionDetail
 
     if (id <= 0 || viewer_user_id <= 0) {
         return {};
@@ -143,7 +143,7 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
                                    std::int64_t page_size,
                                    std::int64_t problem_id,
                                    const std::string& status) {
-    // 按 user_id 与可选过滤 COUNT → SELECT 分页 → 填 SubmissionPage
+    // 按 user_id 与可选过滤 COUNT -> SELECT 分页 -> 填 SubmissionPage
 
     // 校验分页（页码从 1 起，每页最多 100）
     if (user_id <= 0 || page_num < 1 || page_size < 1 || page_size > 100) {

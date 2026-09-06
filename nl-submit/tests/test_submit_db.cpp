@@ -79,7 +79,7 @@ int page_contains(const nloj::submit::SubmissionPage& page, std::int64_t id) {
     return 0;
 }
 
-// 非法 create → 合法 create + MQ → get 本人/他人/admin → list 过滤。
+// 非法 create -> 合法 create + MQ -> get 本人/他人/admin -> list 过滤。
 void test_submit_flow() {
     drain_judge_queue();
 
@@ -159,7 +159,7 @@ void test_submit_flow() {
 }  // namespace
 
 int main() {
-    // 提交全流程联调 → 汇总退出码
+    // 提交全流程联调 -> 汇总退出码
     test_submit_flow();
     if (g_failed) {
         std::cerr << "nl-submit db tests failed (检查 MySQL 是否启动且 nloj/nloj_db 已就绪)\n";

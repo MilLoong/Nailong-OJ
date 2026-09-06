@@ -25,7 +25,7 @@ const char* module_name() {
 }
 
 int run_judge_task(std::int64_t submission_id) {
-    // 读 submission 与题目用例 → 置 JUDGING → 沙箱单容器跑全部用例 → 比对输出 → UPDATE 终态
+    // 读 submission 与题目用例 -> 置 JUDGING -> 沙箱单容器跑全部用例 -> 比对输出 -> UPDATE 终态
 
     if (submission_id <= 0) {
         return 0;
@@ -195,7 +195,7 @@ int run_judge_task(std::int64_t submission_id) {
 }
 
 int reclaim_stale_judging(int older_than_sec) {
-    // 查出超时 JUDGING / PENDING → JUDGING 乐观改回 PENDING → 重新入队
+    // 查出超时 JUDGING / PENDING -> JUDGING 乐观改回 PENDING -> 重新入队
 
     if (older_than_sec <= 0) {
         return 0;

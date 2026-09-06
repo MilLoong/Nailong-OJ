@@ -98,7 +98,7 @@ std::string exe_dir() {
 #endif
 }
 
-// 环境变量 → exe 旁副本 → 编译期仓库路径。
+// 环境变量 -> exe 旁副本 -> 编译期仓库路径。
 std::string find_openapi_path() {
     const char* env = std::getenv("NLOJ_OPENAPI");
     if (env != nullptr && file_exists(env)) {
@@ -160,7 +160,7 @@ int read_int_field(const nlohmann::json& j, const char* key, int& out) {
     return 1;
 }
 
-// Header Bearer → verify_token。失败已写入 40100。
+// Header Bearer -> verify_token。失败已写入 40100。
 int require_login(const httplib::Request& req,
                   httplib::Response& res,
                   nloj::user::AuthUser& out) {
@@ -338,7 +338,7 @@ void register_http_routes(httplib::Server& svr) {
         return httplib::Server::HandlerResponse::Unhandled;
     });
 
-    // GET / → 文档页（不单独做前端）
+    // GET / -> 文档页（不单独做前端）
     svr.Get("/", [](const httplib::Request&, httplib::Response& res) {
         res.set_redirect("/api/docs");
     });

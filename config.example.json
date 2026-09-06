@@ -1,0 +1,25 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "jwt_secret": "nloj-dev-secret-change-me"
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "nloj",
+    "password": "nloj123456",
+    "database": "nloj_db",
+    "pool_size": 8
+  },
+  "redis": {
+    "host": "127.0.0.1",
+    "port": 6379
+  },
+  "rabbitmq": {
+    "host": "127.0.0.1",
+    "port": 5672,
+    "username": "nloj",
+    "password": "nloj123456"
+  }
+}

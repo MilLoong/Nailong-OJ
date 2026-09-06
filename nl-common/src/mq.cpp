@@ -1,4 +1,7 @@
 #include "nloj/common/mq.h"
+#include "nloj/common/config.h"
+
+#include <nlohmann/json.hpp>
 
 #ifdef _WIN32
 #include <WinSock2.h>
@@ -19,10 +22,6 @@
 namespace nloj::common {
 namespace {
 
-constexpr const char* kHost = "127.0.0.1";
-constexpr int kPort = 5672;
-constexpr const char* kUser = "nloj";
-constexpr const char* kPass = "nloj123456";
 constexpr const char* kVhost = "/";
 constexpr const char* kExchange = "nloj.judge.exchange";
 constexpr const char* kQueue = "nloj.judge.queue";
@@ -67,75 +66,29 @@ void drop_conn(int opened) {
 }
 
 std::string encode_json(const JudgeTaskMessage& msg) {
-    const std::string json = "{\"submissionId\":"
-                            + std::to_string(msg.submission_id)
-                            + ",\"problemId\":"
-                            + std::to_string(msg.problem_id)
-                            + ",\"language\":\""
-                            + msg.language
-                            + "\"}";
-    return json;
-}
-
-// 跳过空白，返回新下标。
-size_t skip_ws(const std::string& s, size_t i) {
-    while (i < s.size() && (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t')) {
-        ++i;
-    }
-    return i;
-}
-
-int parse_int_field(const std::string& json, const char* key, std::int64_t& out) {
-    const std::string pat = std::string("\"") + key + "\":";
-    const auto pos = json.find(pat);
-    if (pos == std::string::npos) {
-        return 0;
-    }
-    size_t i = skip_ws(json, pos + pat.size());
-    try {
-        size_t n = 0;
-        out = std::stoll(json.substr(i), &n);
-        if (n == 0) {
-            return 0;
-        }
-    } catch (...) {
-        return 0;
-    }
-    return 1;
-}
-
-int parse_string_field(const std::string& json, const char* key, std::string& out) {
-    const std::string pat = std::string("\"") + key + "\":";
-    const auto pos = json.find(pat);
-    if (pos == std::string::npos) {
-        return 0;
-    }
-    size_t i = skip_ws(json, pos + pat.size());
-    if (i >= json.size() || json[i] != '"') {
-        return 0;
-    }
-    ++i;
-    const auto end = json.find('"', i);
-    if (end == std::string::npos) {
-        return 0;
-    }
-    out = json.substr(i, end - i);
-    return out.empty() ? 0 : 1;
+    nlohmann::json j;
+    j["submissionId"] = msg.submission_id;
+    j["problemId"] = msg.problem_id;
+    j["language"] = msg.language;
+    return j.dump();
 }
 
 int parse_json(const std::string& json, JudgeTaskMessage& out) {
+    const nlohmann::json j = nlohmann::json::parse(json, nullptr, false);
+    if (j.is_discarded() || !j.is_object()) {
+        return 0;
+    }
+    if (!j.contains("submissionId") || !j["submissionId"].is_number_integer()
+     || !j.contains("problemId") || !j["problemId"].is_number_integer()
+     || !j.contains("language") || !j["language"].is_string()) {
+        return 0;
+    }
     JudgeTaskMessage tmp;
     tmp.delivery_tag = 0;
-    if (!parse_int_field(json, "submissionId", tmp.submission_id)) {
-        return 0;
-    }
-    if (!parse_int_field(json, "problemId", tmp.problem_id)) {
-        return 0;
-    }
-    if (!parse_string_field(json, "language", tmp.language)) {
-        return 0;
-    }
-    if (tmp.submission_id <= 0 || tmp.problem_id <= 0) {
+    tmp.submission_id = j["submissionId"].get<std::int64_t>();
+    tmp.problem_id = j["problemId"].get<std::int64_t>();
+    tmp.language = j["language"].get<std::string>();
+    if (tmp.submission_id <= 0 || tmp.problem_id <= 0 || tmp.language.empty()) {
         return 0;
     }
     out = std::move(tmp);
@@ -193,8 +146,9 @@ int broker_reachable() {
     sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<u_short>(kPort));
-    inet_pton(AF_INET, kHost, &addr.sin_addr);
+    const AppConfig& cfg = app_config();
+    addr.sin_port = htons(static_cast<u_short>(cfg.rabbit_port));
+    inet_pton(AF_INET, cfg.rabbit_host.c_str(), &addr.sin_addr);
     connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
 
     fd_set wset;
@@ -235,13 +189,16 @@ int try_connect_rabbit() {
     struct timeval timeout;
     timeout.tv_sec = kConnectTimeoutSec;
     timeout.tv_usec = 0;
-    if (amqp_socket_open_noblock(socket, kHost, kPort, &timeout) != AMQP_STATUS_OK) {
+    const AppConfig& cfg = app_config();
+    if (amqp_socket_open_noblock(socket, cfg.rabbit_host.c_str(), cfg.rabbit_port, &timeout)
+        != AMQP_STATUS_OK) {
         drop_conn(0);
         return 0;
     }
 
     amqp_rpc_reply_t login = amqp_login(
-        g_conn, kVhost, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN, kUser, kPass
+        g_conn, kVhost, 0, 131072, 0, AMQP_SASL_METHOD_PLAIN,
+        cfg.rabbit_user.c_str(), cfg.rabbit_password.c_str()
     );
     if (!rpc_ok(login)) {
         log_rpc("amqp login", login);
@@ -363,7 +320,7 @@ int rabbit_publish(const JudgeTaskMessage& msg) {
 }  // namespace
 
 bool publish_judge_task(const JudgeTaskMessage& msg) {
-    // 校验字段 → 探测 Broker → basic.publish 或入进程内队列
+    // 校验字段 -> 探测 Broker -> basic.publish 或入进程内队列
 
     if (msg.submission_id <= 0 || msg.problem_id <= 0 || msg.language.empty()) {
         return 0;
@@ -382,7 +339,7 @@ bool publish_judge_task(const JudgeTaskMessage& msg) {
 }
 
 bool try_pop_judge_task(JudgeTaskMessage& out) {
-    // 探测 Broker → basic.get 或从进程内队列弹出
+    // 探测 Broker -> basic.get 或从进程内队列弹出
 
     std::lock_guard<std::mutex> lock(g_mu);
     ensure_backend();
