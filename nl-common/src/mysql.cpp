@@ -6,6 +6,7 @@
 #include <iostream>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace nloj::common {
@@ -210,11 +211,14 @@ int query_stmt(MYSQL* conn,
         return 1;
     }
     const unsigned cols = mysql_num_fields(meta);
+    // Linux libmysqlclient 8 已去掉 my_bool，跟 MYSQL_BIND 字段类型走
+    using BindNull = std::remove_pointer_t<decltype(MYSQL_BIND::is_null)>;
+    using BindErr = std::remove_pointer_t<decltype(MYSQL_BIND::error)>;
     struct ColBuf {
         std::vector<char> buf;
         unsigned long len;
-        my_bool is_null;
-        my_bool error;
+        BindNull is_null;
+        BindErr error;
     };
     std::vector<ColBuf> cols_buf(cols);
     std::vector<MYSQL_BIND> out_bind(cols);
