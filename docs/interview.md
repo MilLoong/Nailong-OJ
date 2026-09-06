@@ -31,7 +31,7 @@
 |------|-----------|
 | 架构 | CMake 多模块（NLOJ 项目下 nl-* 子模块），HTTP 层与领域层分离 |
 | 提交 | 提交接口快速返回，状态 PENDING，通过 RabbitMQ 解耦判题 |
-| 判题 | 抽象 `JudgeSandbox` 接口，Docker 容器 `--network=none` + 内存/CPU 限制 |
+| 判题 | 抽象 `JudgeSandbox` 接口，Docker 容器 `--network=none` + 内存/CPU 限制；编译一次后单容器跑完全部用例，容器内逐用例计时并记录真实内存 |
 | 比对 | 策略模式封装 ExactMatch，预留 SPJ 扩展 |
 | 缓存 | 题目详情 Redis 缓存，更新时主动失效 |
 | 鉴权 | JWT + 中间件，admin 接口角色校验 |

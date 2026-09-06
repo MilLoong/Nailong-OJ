@@ -24,15 +24,15 @@ const char* module_name() {
 }
 
 int run_judge_task(std::int64_t submission_id) {
-    // 读 submission 与题目用例 → 置 JUDGING → 沙箱编译运行 → 比对输出 → UPDATE 终态
+    // 读 submission 与题目用例 → 置 JUDGING → 沙箱单容器跑全部用例 → 比对输出 → UPDATE 终态
 
     if (submission_id <= 0) {
         return 0;
     }
 
     // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return 0;
     }
 
@@ -41,15 +41,13 @@ int run_judge_task(std::int64_t submission_id) {
                                    "FROM submission WHERE id="
                                   + std::to_string(submission_id)
                                   + " LIMIT 1";
-    MYSQL_RES* sub_result = nloj::common::query_select(&mysql, select_sql);
+    MYSQL_RES* sub_result = nloj::common::query_select(conn.get(), select_sql);
     if (sub_result == nullptr) {
-        mysql_close(&mysql);
         return 0;
     }
     MYSQL_ROW sub_row = mysql_fetch_row(sub_result);
     if (sub_row == nullptr || sub_row[0] == nullptr || sub_row[1] == nullptr) {
         mysql_free_result(sub_result);
-        mysql_close(&mysql);
         return 0;  // 提交不存在
     }
     const std::int64_t problem_id = std::stoll(sub_row[1]);
@@ -59,11 +57,9 @@ int run_judge_task(std::int64_t submission_id) {
     mysql_free_result(sub_result);
     if (cur_status == "AC" || cur_status == "WA" || cur_status == "TLE" || cur_status == "MLE"
      || cur_status == "RE" || cur_status == "CE" || cur_status == "SYSTEM_ERROR") {
-        mysql_close(&mysql);
         return 1;  // 已出终态，重投递幂等
     }
     if (language.empty() || code.empty()) {
-        mysql_close(&mysql);
         return 0;
     }
 
@@ -71,15 +67,13 @@ int run_judge_task(std::int64_t submission_id) {
     const std::string problem_sql = "SELECT time_limit, memory_limit FROM problem WHERE id="
                                    + std::to_string(problem_id)
                                    + " AND deleted=0 LIMIT 1";
-    MYSQL_RES* problem_result = nloj::common::query_select(&mysql, problem_sql);
+    MYSQL_RES* problem_result = nloj::common::query_select(conn.get(), problem_sql);
     if (problem_result == nullptr) {
-        mysql_close(&mysql);
         return 0;
     }
     MYSQL_ROW problem_row = mysql_fetch_row(problem_result);
     if (problem_row == nullptr || problem_row[0] == nullptr || problem_row[1] == nullptr) {
         mysql_free_result(problem_result);
-        mysql_close(&mysql);
         return 0;  // 题目不存在或已删
     }
     const int time_limit = std::stoi(problem_row[0]);
@@ -90,9 +84,8 @@ int run_judge_task(std::int64_t submission_id) {
     const std::string case_sql = "SELECT id, input, output FROM problem_case WHERE problem_id="
                                 + std::to_string(problem_id)
                                 + " AND deleted=0 ORDER BY sort_order ASC, id ASC";
-    MYSQL_RES* case_result = nloj::common::query_select(&mysql, case_sql);
+    MYSQL_RES* case_result = nloj::common::query_select(conn.get(), case_sql);
     if (case_result == nullptr) {
-        mysql_close(&mysql);
         return 0;
     }
     std::vector<JudgeCase> cases;
@@ -108,103 +101,119 @@ int run_judge_task(std::int64_t submission_id) {
     }
     mysql_free_result(case_result);
     if (cases.empty()) {
-        mysql_close(&mysql);
         return 0;  // 没有用例无法判
     }
 
     // 置 JUDGING
     const std::string judging_sql = "UPDATE submission SET status='JUDGING' WHERE id="
                                    + std::to_string(submission_id);
-    if (!nloj::common::query_exec(&mysql, judging_sql)) {
-        mysql_close(&mysql);
+    if (!nloj::common::query_exec(conn.get(), judging_sql)) {
         return 0;
     }
 
-    // 沙箱编译运行 → 比对输出 → UPDATE 终态
-    auto write_verdict = [&](const std::string& status, int time_used, const std::string& info) {
+    // 沙箱跑完后写终态：time_used / memory_used 取本次运行实测值
+    auto write_verdict = [&](const std::string& status,
+                             int time_used,
+                             int memory_used,
+                             const std::string& info) {
         std::string clipped = info;
         if (clipped.size() > 500) {
             clipped.resize(500);
         }
-        const std::string escaped_status = nloj::common::escape_sql(&mysql, status);
-        const std::string escaped_info = nloj::common::escape_sql(&mysql, clipped);
+        const std::string escaped_status = nloj::common::escape_sql(conn.get(), status);
+        const std::string escaped_info = nloj::common::escape_sql(conn.get(), clipped);
         const std::string time_sql = time_used < 0 ? "NULL" : std::to_string(time_used);
+        const std::string mem_sql = memory_used < 0 ? "NULL" : std::to_string(memory_used);
         const std::string update_sql = "UPDATE submission SET status='"
                                       + escaped_status
                                       + "', time_used="
                                       + time_sql
-                                      + ", memory_used=NULL, judge_info='"
+                                      + ", memory_used="
+                                      + mem_sql
+                                      + ", judge_info='"
                                       + escaped_info
                                       + "' WHERE id="
                                       + std::to_string(submission_id);
-        return nloj::common::query_exec(&mysql, update_sql) ? 1 : 0;
+        return nloj::common::query_exec(conn.get(), update_sql) ? 1 : 0;
     };
 
+    // 沙箱单容器跑完全部用例：容器内逐用例计时，wait4 记录真实内存峰值
     std::unique_ptr<JudgeSandbox> box = make_sandbox();
-    SandboxRequest req;
+    SandboxJudgeRequest req;
     req.language = language;
     req.code = code;
     req.time_limit_ms = time_limit;
     req.memory_limit_kb = memory_limit;
-    req.compile_only = 1;
-    const SandboxResult compiled = box -> execute(req);
-    if (compiled.verdict != "OK") {
-        const std::string status = compiled.verdict == "CE" ? "CE" : "SYSTEM_ERROR";
-        const std::string info = compiled.verdict == "CE" ? compiled.stderr_text : "sandbox compile failed";
-        const int ok = write_verdict(status, -1, info);
-        mysql_close(&mysql);
+    for (const auto& item : cases) {
+        req.inputs.push_back(item.input);
+    }
+    const SandboxJudgeResult result = box -> judge(req);
+    if (result.status == "CE") {
+        const int ok = write_verdict("CE", -1, -1, result.error_text);
+        return ok;
+    }
+    if (result.status != "OK") {
+        const std::string info = result.error_text.empty() ? "sandbox run failed" : result.error_text;
+        const int ok = write_verdict("SYSTEM_ERROR", -1, -1, info);
         return ok;
     }
 
+    // 逐用例核对运行结论与输出；首个失败用例即终态，AC 汇总最大耗时/内存
     int max_time = 0;
-    int case_no = 1;
-    for (const auto& item : cases) {
-        req.compile_only = 0;
-        req.stdin_data = item.input;
-        const SandboxResult ran = box -> execute(req);
-        if (ran.time_used_ms > max_time) {
-            max_time = ran.time_used_ms;
-        }
-        if (ran.verdict != "OK") {
-            const std::string info = ran.verdict + " on test case " + std::to_string(case_no);
-            const int ok = write_verdict(ran.verdict, max_time, info);
-            mysql_close(&mysql);
+    int max_mem = -1;
+    int case_no = 0;
+    for (const auto& one : result.cases) {
+        case_no = one.index;
+        if (one.verdict != "OK") {
+            // runner 的 SE 是框架内部错误，归一到库里既有的 SYSTEM_ERROR
+            const std::string status = one.verdict == "SE" ? "SYSTEM_ERROR" : one.verdict;
+            const std::string info = one.verdict + " on test case " + std::to_string(one.index);
+            const int ok = write_verdict(status, one.time_used_ms, one.memory_used_kb, info);
             return ok;
         }
-        if (!judge_outputs_match(item.output, ran.stdout_text)) {
-            const std::string info = "WA on test case " + std::to_string(case_no);
-            const int ok = write_verdict("WA", max_time, info);
-            mysql_close(&mysql);
+        if (static_cast<std::size_t>(one.index) > cases.size()) {
+            return 0;  // 沙箱返回了多余的用例，视为异常
+        }
+        if (one.time_used_ms > max_time) {
+            max_time = one.time_used_ms;
+        }
+        if (one.memory_used_kb > max_mem) {
+            max_mem = one.memory_used_kb;
+        }
+        if (!judge_outputs_match(cases[static_cast<std::size_t>(one.index - 1)].output, one.stdout_text)) {
+            const std::string info = "WA on test case " + std::to_string(one.index);
+            const int ok = write_verdict("WA", one.time_used_ms, one.memory_used_kb, info);
             return ok;
         }
-        ++case_no;
+    }
+    if (case_no != static_cast<int>(cases.size())) {
+        return 0;  // runner 提前停止却没带失败用例，视为异常
     }
 
     const std::string ac_info = "All " + std::to_string(cases.size()) + " test cases passed";
-    const int ok = write_verdict("AC", max_time, ac_info);
-    mysql_close(&mysql);
+    const int ok = write_verdict("AC", max_time, max_mem, ac_info);
     return ok;
 }
 
 int reclaim_stale_judging(int older_than_sec) {
-    // 查出超时 JUDGING → 乐观改回 PENDING → 重新入队
+    // 查出超时 JUDGING / PENDING → JUDGING 乐观改回 PENDING → 重新入队
 
     if (older_than_sec <= 0) {
         return 0;
     }
 
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return 0;
     }
 
-    const std::string select_sql = "SELECT id, problem_id, language FROM submission "
-                                   "WHERE status='JUDGING' AND update_time < DATE_SUB(NOW(), INTERVAL "
+    const std::string select_sql = "SELECT id, problem_id, language, status FROM submission "
+                                   "WHERE status IN ('JUDGING','PENDING') "
+                                   "AND update_time < DATE_SUB(NOW(), INTERVAL "
                                   + std::to_string(older_than_sec)
                                   + " SECOND)";
-    MYSQL_RES* result = nloj::common::query_select(&mysql, select_sql);
+    MYSQL_RES* result = nloj::common::query_select(conn.get(), select_sql);
     if (result == nullptr) {
-        mysql_close(&mysql);
         return 0;
     }
 
@@ -212,31 +221,35 @@ int reclaim_stale_judging(int older_than_sec) {
         std::int64_t id;
         std::int64_t problem_id;
         std::string language;
+        std::string status;
     };
     std::vector<StaleRow> rows;
     while (MYSQL_ROW row = mysql_fetch_row(result)) {
-        if (row[0] == nullptr || row[1] == nullptr || row[2] == nullptr) {
+        if (row[0] == nullptr || row[1] == nullptr || row[2] == nullptr || row[3] == nullptr) {
             continue;
         }
         StaleRow one;
         one.id = std::stoll(row[0]);
         one.problem_id = std::stoll(row[1]);
         one.language = row[2];
+        one.status = row[3];
         rows.push_back(one);
     }
     mysql_free_result(result);
 
     int reclaimed = 0;
     for (const auto& one : rows) {
-        const std::string update_sql = "UPDATE submission SET status='PENDING', "
-                                       "judge_info='reclaimed stale JUDGING' WHERE id="
-                                      + std::to_string(one.id)
-                                      + " AND status='JUDGING'";
-        if (!nloj::common::query_exec(&mysql, update_sql)) {
-            continue;
-        }
-        if (mysql_affected_rows(&mysql) == 0) {
-            continue;
+        if (one.status == "JUDGING") {
+            const std::string update_sql = "UPDATE submission SET status='PENDING', "
+                                           "judge_info='reclaimed stale JUDGING' WHERE id="
+                                          + std::to_string(one.id)
+                                          + " AND status='JUDGING'";
+            if (!nloj::common::query_exec(conn.get(), update_sql)) {
+                continue;
+            }
+            if (mysql_affected_rows(conn.get()) == 0) {
+                continue;
+            }
         }
         nloj::common::JudgeTaskMessage task;
         task.submission_id = one.id;
@@ -246,7 +259,6 @@ int reclaim_stale_judging(int older_than_sec) {
             ++reclaimed;
         }
     }
-    mysql_close(&mysql);
     return reclaimed;
 }
 

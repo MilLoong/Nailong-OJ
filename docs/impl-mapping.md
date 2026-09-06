@@ -171,7 +171,7 @@ AuthUser get_current_user(const std::string& user_id);
 | 入参 | `submission_id`（消息里带的） |
 | 返回 | `1` 成功写回结果；`0` 失败 |
 | 副作用 | 更新 `submission` 的 status/time_used/memory_used/judge_info |
-| 流程注释 | `读 submission 与题目用例 → 置 JUDGING → 沙箱编译运行 → 比对输出 → UPDATE 终态` |
+| 流程注释 | `读 submission 与题目用例 → 置 JUDGING → 沙箱单容器跑全部用例 → 比对输出 → UPDATE 终态` |
 
 ---
 

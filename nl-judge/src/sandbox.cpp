@@ -1,11 +1,13 @@
 #include "nloj/judge/sandbox.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -26,6 +28,137 @@ namespace {
 
 constexpr int kCompileTimeoutMs = 120000;  // 含首次拉镜像
 constexpr int kDockerOverheadMs = 60000;
+constexpr int kOutputCapBytes = 256 * 1024;  // 单个用例输出读取上限
+
+// 沙箱内逐用例计时/测内存用的 runner 源码（Linux，由沙箱内 g++ 编译）。
+// 宿主侧不会执行它；Docker 与 Linux 本机降级都跑这份逻辑。
+constexpr const char* kRunnerSource = R"SANDBOX(
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/resource.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+// 判题 runner：按顺序 fork ./main 并喂入 in_k.txt，wait4 记录每个用例的
+// 真实耗时与 ru_maxrss（KB），每跑完一个用例输出一行：
+//   case <k> verdict <OK|TLE|MLE|RE|SE> time_ms <t> mem_kb <m>
+// 遇到首个非 OK 用例即停止，不再跑剩余用例。
+// 说明：外部 SIGKILL（容器 OOM 等）按 MLE；超时由 runner 自己杀，按 TLE。
+
+namespace {
+
+long long now_ms() {
+    using clock = std::chrono::steady_clock;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        clock::now().time_since_epoch()).count();
+}
+
+int open_case(const char* kind, int k, int flags) {
+    char path[64];
+    std::snprintf(path, sizeof(path), "%s_%d.txt", kind, k);
+    return open(path, flags, 0644);
+}
+
+void close3(int a, int b, int c) {
+    if (a >= 0) {
+        close(a);
+    }
+    if (b >= 0) {
+        close(b);
+    }
+    if (c >= 0) {
+        close(c);
+    }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        std::fprintf(stderr, "usage: runner time_limit_ms case_count\n");
+        return 2;
+    }
+    const int time_limit_ms = std::atoi(argv[1]);
+    const int case_count = std::atoi(argv[2]);
+    if (time_limit_ms <= 0 || case_count <= 0) {
+        std::fprintf(stderr, "runner: bad args\n");
+        return 2;
+    }
+    for (int k = 1; k <= case_count; ++k) {
+        const int in_fd = open_case("in", k, O_RDONLY);
+        const int out_fd = open_case("out", k, O_WRONLY | O_CREAT | O_TRUNC);
+        const int err_fd = open_case("err", k, O_WRONLY | O_CREAT | O_TRUNC);
+        if (in_fd < 0 || out_fd < 0 || err_fd < 0) {
+            std::printf("case %d verdict SE time_ms 0 mem_kb -1\n", k);
+            std::fflush(stdout);
+            return 3;
+        }
+        const pid_t pid = fork();
+        if (pid < 0) {
+            close3(in_fd, out_fd, err_fd);
+            std::printf("case %d verdict SE time_ms 0 mem_kb -1\n", k);
+            std::fflush(stdout);
+            return 3;
+        }
+        if (pid == 0) {
+            dup2(in_fd, 0);
+            dup2(out_fd, 1);
+            dup2(err_fd, 2);
+            close3(in_fd, out_fd, err_fd);
+            execl("./main", "main", nullptr);  // 编译产物与 runner 同目录
+            _exit(127);
+        }
+        close3(in_fd, out_fd, err_fd);
+
+        const long long start_ms = now_ms();
+        struct rusage ru;
+        std::memset(&ru, 0, sizeof(ru));
+        int status = 0;
+        int killed = 0;  // 1=超时由 runner 杀 2=wait4 出错
+        for (;;) {
+            const pid_t w = wait4(pid, &status, WNOHANG, &ru);
+            if (w == pid) {
+                break;
+            }
+            if (w < 0) {
+                killed = 2;
+                break;
+            }
+            if (now_ms() - start_ms >= time_limit_ms) {
+                kill(pid, SIGKILL);
+                killed = 1;
+                while (wait4(pid, &status, 0, &ru) != pid) {
+                }
+                break;
+            }
+            usleep(2000);
+        }
+
+        const int elapsed_ms = static_cast<int>(now_ms() - start_ms);
+        const int mem_kb = ru.ru_maxrss > 0 ? static_cast<int>(ru.ru_maxrss) : -1;
+        const char* verdict = "SE";
+        if (killed == 1) {
+            verdict = "TLE";
+        } else if (killed == 2) {
+            verdict = "SE";
+        } else if (WIFEXITED(status)) {
+            verdict = WEXITSTATUS(status) == 0 ? "OK" : "RE";
+        } else if (WIFSIGNALED(status)) {
+            verdict = WTERMSIG(status) == SIGKILL ? "MLE" : "RE";
+        }
+        std::printf("case %d verdict %s time_ms %d mem_kb %d\n", k, verdict, elapsed_ms, mem_kb);
+        std::fflush(stdout);
+        if (std::strcmp(verdict, "OK") != 0) {
+            return 0;
+        }
+    }
+    return 0;
+}
+)SANDBOX";
 
 struct CmdResult {
     int exit_code;
@@ -201,13 +334,21 @@ CmdResult run_cmd(const std::string& cmd,
 #endif
 
 int docker_available() {
-    // 只关心能不能连上 daemon，输出丢掉即可
+    // daemon 通且镜像已拉，否则退回本机 g++
 #ifdef _WIN32
-    const int code = std::system("docker version >nul 2>&1");
+    const int daemon = std::system("docker version >nul 2>&1");
+    if (daemon != 0) {
+        return 0;
+    }
+    const int image = std::system("docker image inspect gcc:13-bookworm >nul 2>&1");
 #else
-    const int code = std::system("docker version >/dev/null 2>&1");
+    const int daemon = std::system("docker version >/dev/null 2>&1");
+    if (daemon != 0) {
+        return 0;
+    }
+    const int image = std::system("docker image inspect gcc:13-bookworm >/dev/null 2>&1");
 #endif
-    return (code == 0) ? 1 : 0;
+    return (image == 0) ? 1 : 0;
 }
 
 std::string sandbox_image() {
@@ -243,6 +384,56 @@ std::string rtrim_copy(std::string s) {
     return s;
 }
 
+// 单个用例的文件名，如 in_1.txt / out_1.txt。runner 与宿主侧共用这一命名。
+std::string case_file(const char* kind, int k) {
+    return std::string(kind) + "_" + std::to_string(k) + ".txt";
+}
+
+// 解析 runner 输出的一行：case k verdict V time_ms t mem_kb m。
+int parse_runner_line(const std::string& line, SandboxCaseResult& out) {
+    char verdict[16] = {0};
+    int k = 0;
+    int time_ms = -1;
+    int mem_kb = -1;
+    const int n = std::sscanf(line.c_str(), "case %d verdict %15s time_ms %d mem_kb %d",
+                              &k, verdict, &time_ms, &mem_kb);
+    if (n < 4 || k <= 0) {
+        return 0;
+    }
+    out.index = k;
+    out.verdict = verdict;
+    out.time_used_ms = time_ms;
+    out.memory_used_kb = mem_kb;
+    return 1;
+}
+
+// 汇总 runner 输出：逐行解析，并回填 OK 用例的实际输出（宿主侧做 WA 比对）。
+// runner 遇到首个非 OK 用例即停，因此结果个数可能小于用例总数。
+int collect_runner_results(const std::filesystem::path& dir,
+                           const std::string& runner_text,
+                           int case_count,
+                           std::vector<SandboxCaseResult>& out) {
+    out.clear();
+    std::istringstream in(runner_text);
+    std::string line;
+    int seen = 0;
+    while (std::getline(in, line)) {
+        SandboxCaseResult one;
+        if (!parse_runner_line(line, one) || one.index != seen + 1) {
+            continue;  // 非结果行或乱序，忽略
+        }
+        if (one.index > case_count) {
+            break;
+        }
+        seen = one.index;
+        if (one.verdict == "OK") {
+            one.stdout_text = read_file_limited(dir / case_file("out", one.index), kOutputCapBytes);
+        }
+        out.push_back(std::move(one));
+    }
+    return static_cast<int>(out.size());
+}
+
 // Docker 沙箱：docker run --network=none + 内存/pids 限制。
 class DockerJudgeSandbox : public JudgeSandbox {
 public:
@@ -253,84 +444,93 @@ public:
         std::filesystem::remove_all(work_dir_, ec);
     }
 
-    SandboxResult execute(const SandboxRequest& request) override {
-        SandboxResult out;
-        out.verdict = "SYSTEM_ERROR";
-        out.time_used_ms = 0;
-        out.memory_used_kb = -1;
+    SandboxJudgeResult judge(const SandboxJudgeRequest& request) override {
+        // 语言校验 → 写 main/runner/输入 → 容器内编译 → 单容器跑完全部用例 → 汇总
+
+        SandboxJudgeResult out;
+        out.status = "SYSTEM_ERROR";
+        out.error_text = "sandbox run failed";
         if (request.language != "CPP") {
-            out.verdict = "CE";
-            out.stderr_text = "unsupported language";
+            out.status = "CE";
+            out.error_text = "unsupported language";
+            return out;
+        }
+        if (request.code.empty() || request.inputs.empty() || request.time_limit_ms <= 0) {
             return out;
         }
 
         const std::filesystem::path root(work_dir_);
         const auto stdout_path = root / "sandbox_stdout.txt";
         const auto stderr_path = root / "sandbox_stderr.txt";
+        const int case_count = static_cast<int>(request.inputs.size());
+        if (!write_file(root / "main.cpp", request.code)
+         || !write_file(root / "runner.cpp", kRunnerSource)) {
+            return out;
+        }
+        for (std::size_t i = 0; i < request.inputs.size(); ++i) {
+            const int k = static_cast<int>(i + 1);
+            if (!write_file(root / case_file("in", k), request.inputs[i])) {
+                return out;
+            }
+        }
 
-        if (request.compile_only) {
-            if (!write_file(root / "main.cpp", request.code)) {
-                out.stderr_text = "write main.cpp failed";
-                return out;
-            }
-            const int mem_kb = request.memory_limit_kb > 524288 ? request.memory_limit_kb : 524288;
-            const std::string cmd = "docker run --rm --network=none --memory="
-                                   + std::to_string(mem_kb) + "k --memory-swap="
-                                   + std::to_string(mem_kb) + "k --pids-limit=64 --cpus=1 -v "
-                                   + docker_bind(work_dir_, "/work")
-                                   + " -w /work "
-                                   + image_
-                                   + " g++ -O2 -std=c++17 -o main main.cpp";
-            const CmdResult r = run_cmd(cmd, stdout_path, stderr_path, kCompileTimeoutMs, "");
-            out.stderr_text = read_file_limited(stderr_path, 4096);
-            out.stdout_text = read_file_limited(stdout_path, 4096);
-            out.time_used_ms = r.elapsed_ms;
-            if (r.timed_out) {
-                out.verdict = "SYSTEM_ERROR";
-                out.stderr_text = "compile timeout";
-                return out;
-            }
-            if (r.exit_code != 0) {
-                out.verdict = "CE";
-                return out;
-            }
-            out.verdict = "OK";
+        // 容器内编译：先编译 runner，再编译用户代码（main 编译失败即 CE）
+        const int compile_mem_kb = request.memory_limit_kb > 524288 ? request.memory_limit_kb : 524288;
+        const std::string compile_cmd = "docker run --rm --network=none --memory="
+                                       + std::to_string(compile_mem_kb) + "k --memory-swap="
+                                       + std::to_string(compile_mem_kb) + "k --pids-limit=64 --cpus=1 -v "
+                                       + docker_bind(work_dir_, "/work")
+                                       + " -w /work "
+                                       + image_
+                                       + " bash -c \"g++ -O2 -std=c++17 -o runner runner.cpp && g++ -O2 -std=c++17 -o main main.cpp\"";
+        const CmdResult cr = run_cmd(compile_cmd, stdout_path, stderr_path, kCompileTimeoutMs, "");
+        const std::string compile_err = read_file_limited(stderr_path, 4096);
+        if (cr.timed_out) {
+            out.error_text = "compile timeout";
+            return out;
+        }
+        if (cr.exit_code != 0) {
+            out.status = "CE";
+            out.error_text = compile_err;
             return out;
         }
 
-        if (!write_file(root / "input.txt", request.stdin_data)) {
-            out.stderr_text = "write input.txt failed";
-            return out;
-        }
-        const int sec = request.time_limit_ms <= 0 ? 1 : (request.time_limit_ms + 999) / 1000;
+        // 单容器跑完全部用例：runner 在容器内逐用例计时并 wait4 记录 ru_maxrss
         const int mem_kb = request.memory_limit_kb > 0 ? request.memory_limit_kb : 262144;
-        const std::string cmd = "docker run --rm --network=none --memory="
-                               + std::to_string(mem_kb) + "k --memory-swap="
-                               + std::to_string(mem_kb) + "k --pids-limit=64 --cpus=1 --read-only -v "
-                               + docker_bind(work_dir_, "/work")
-                               + " -w /work "
-                               + image_
-                               + " bash -c \"timeout --signal=KILL "
-                               + std::to_string(sec)
-                               + "s ./main < /work/input.txt\"";
-        const int host_timeout = request.time_limit_ms + kDockerOverheadMs;
-        const CmdResult r = run_cmd(cmd, stdout_path, stderr_path, host_timeout, "");
-        out.stdout_text = read_file_limited(stdout_path, 256 * 1024);
-        out.stderr_text = read_file_limited(stderr_path, 4096);
-        out.time_used_ms = r.elapsed_ms;
-        if (r.timed_out || r.exit_code == 124) {
-            out.verdict = "TLE";
+        const std::string run_cmd_text = "docker run --rm --network=none --memory="
+                                        + std::to_string(mem_kb) + "k --memory-swap="
+                                        + std::to_string(mem_kb) + "k --pids-limit=64 --cpus=1 --read-only -v "
+                                        + docker_bind(work_dir_, "/work")
+                                        + " -w /work "
+                                        + image_
+                                        + " bash -c \"./runner "
+                                        + std::to_string(request.time_limit_ms) + " " + std::to_string(case_count)
+                                        + "\"";
+        const int host_timeout = kDockerOverheadMs + request.time_limit_ms * case_count + 30000;
+        const CmdResult rr = run_cmd(run_cmd_text, stdout_path, stderr_path, host_timeout, "");
+        if (rr.timed_out) {
+            out.error_text = "run timeout";
             return out;
         }
-        if (r.exit_code == 137) {
-            out.verdict = "MLE";
-            return out;
+        const std::string runner_text = read_file_limited(stdout_path, 1024 * 1024);
+        if (collect_runner_results(root, runner_text, case_count, out.cases) == 0) {
+            if (rr.exit_code == 137) {
+                // 容器整体 OOM（runner 都来不及输出），按 MLE 处理
+                SandboxCaseResult mle;
+                mle.index = 1;
+                mle.verdict = "MLE";
+                mle.time_used_ms = request.time_limit_ms;
+                mle.memory_used_kb = -1;
+                out.cases.push_back(std::move(mle));
+            } else {
+                out.error_text = read_file_limited(stderr_path, 4096);
+                if (out.error_text.empty()) {
+                    out.error_text = "sandbox run failed";
+                }
+                return out;
+            }
         }
-        if (r.exit_code != 0) {
-            out.verdict = "RE";
-            return out;
-        }
-        out.verdict = "OK";
+        out.status = "OK";
         return out;
     }
 
@@ -349,65 +549,110 @@ public:
         std::filesystem::remove_all(work_dir_, ec);
     }
 
-    SandboxResult execute(const SandboxRequest& request) override {
-        SandboxResult out;
-        out.verdict = "SYSTEM_ERROR";
-        out.time_used_ms = 0;
-        out.memory_used_kb = -1;
+    SandboxJudgeResult judge(const SandboxJudgeRequest& request) override {
+        // 语言校验 → 写 main/runner/输入 → 本机 g++ 编译 → 跑完全部用例 → 汇总
+        // Windows 降级：无 getrusage 测不到内存，memory 记 -1，时间含少量进程开销
+
+        SandboxJudgeResult out;
+        out.status = "SYSTEM_ERROR";
+        out.error_text = "sandbox run failed";
         if (request.language != "CPP") {
-            out.verdict = "CE";
-            out.stderr_text = "unsupported language";
+            out.status = "CE";
+            out.error_text = "unsupported language";
             return out;
         }
+        if (request.code.empty() || request.inputs.empty() || request.time_limit_ms <= 0) {
+            return out;
+        }
+
         const std::filesystem::path root(work_dir_);
         const auto stdout_path = root / "sandbox_stdout.txt";
         const auto stderr_path = root / "sandbox_stderr.txt";
-
-        if (request.compile_only) {
-            if (!write_file(root / "main.cpp", request.code)) {
-                out.stderr_text = "write main.cpp failed";
+        const int case_count = static_cast<int>(request.inputs.size());
+        if (!write_file(root / "main.cpp", request.code)) {
+            return out;
+        }
+#ifndef _WIN32
+        if (!write_file(root / "runner.cpp", kRunnerSource)) {
+            return out;
+        }
+#endif
+        for (std::size_t i = 0; i < request.inputs.size(); ++i) {
+            const int k = static_cast<int>(i + 1);
+            if (!write_file(root / case_file("in", k), request.inputs[i])) {
                 return out;
             }
+        }
+
 #ifdef _WIN32
-            const std::string cmd = "g++ -O2 -std=c++17 -o main.exe main.cpp";
+        const std::string compile_cmd = "g++ -O2 -std=c++17 -o main.exe main.cpp";
 #else
-            const std::string cmd = "g++ -O2 -std=c++17 -o main main.cpp";
+        const std::string compile_cmd = "g++ -O2 -std=c++17 -o main main.cpp";
 #endif
-            const CmdResult r = run_cmd(cmd, stdout_path, stderr_path, kCompileTimeoutMs, work_dir_);
-            out.stderr_text = read_file_limited(stderr_path, 4096);
-            out.time_used_ms = r.elapsed_ms;
-            if (r.timed_out || r.exit_code != 0) {
-                out.verdict = r.timed_out ? "SYSTEM_ERROR" : "CE";
-                return out;
-            }
-            out.verdict = "OK";
+        const CmdResult cr = run_cmd(compile_cmd, stdout_path, stderr_path, kCompileTimeoutMs, work_dir_);
+        if (cr.timed_out) {
+            out.error_text = "compile timeout";
+            return out;
+        }
+        if (cr.exit_code != 0) {
+            out.status = "CE";
+            out.error_text = read_file_limited(stderr_path, 4096);
             return out;
         }
 
-        if (!write_file(root / "input.txt", request.stdin_data)) {
-            out.stderr_text = "write input.txt failed";
+#ifndef _WIN32
+        // Linux 本机降级复用 runner：与容器内同一套计时/内存逻辑（便于 CI 覆盖）
+        const std::string runner_compile = "g++ -O2 -std=c++17 -o runner runner.cpp";
+        const CmdResult rc = run_cmd(runner_compile, stdout_path, stderr_path, kCompileTimeoutMs, work_dir_);
+        if (rc.exit_code != 0) {
+            out.error_text = read_file_limited(stderr_path, 4096);
             return out;
         }
-#ifdef _WIN32
-        const std::string cmd = "cmd /c main.exe < input.txt";
-#else
-        const std::string cmd = "./main < input.txt";
-#endif
-        const int host_timeout = request.time_limit_ms > 0 ? request.time_limit_ms + 500 : 1500;
-        const CmdResult r = run_cmd(cmd, stdout_path, stderr_path, host_timeout, work_dir_);
-        out.stdout_text = read_file_limited(stdout_path, 256 * 1024);
-        out.stderr_text = read_file_limited(stderr_path, 4096);
-        out.time_used_ms = r.elapsed_ms;
-        if (r.timed_out) {
-            out.verdict = "TLE";
+        const std::string run_cmd_text = "./runner "
+                                        + std::to_string(request.time_limit_ms) + " " + std::to_string(case_count);
+        const int host_timeout = request.time_limit_ms * case_count + 30000;
+        const CmdResult rr = run_cmd(run_cmd_text, stdout_path, stderr_path, host_timeout, work_dir_);
+        if (rr.timed_out) {
+            out.error_text = "run timeout";
             return out;
         }
-        if (r.exit_code != 0) {
-            out.verdict = "RE";
+        const std::string runner_text = read_file_limited(stdout_path, 1024 * 1024);
+        if (collect_runner_results(root, runner_text, case_count, out.cases) == 0) {
+            out.error_text = read_file_limited(stderr_path, 4096);
+            if (out.error_text.empty()) {
+                out.error_text = "sandbox run failed";
+            }
             return out;
         }
-        out.verdict = "OK";
+        out.status = "OK";
         return out;
+#else
+        // Windows：逐用例跑（无隔离演示，输出按用例落盘后回读）
+        for (int k = 1; k <= case_count; ++k) {
+            const std::string cmd = "cmd /c main.exe < in_" + std::to_string(k) + ".txt";
+            const int host_timeout = request.time_limit_ms + 500;
+            const CmdResult r = run_cmd(cmd, stdout_path, stderr_path, host_timeout, work_dir_);
+            SandboxCaseResult one;
+            one.index = k;
+            one.time_used_ms = r.elapsed_ms;
+            one.memory_used_kb = -1;
+            if (r.timed_out) {
+                one.verdict = "TLE";
+                out.cases.push_back(std::move(one));
+                break;
+            }
+            if (r.exit_code != 0) {
+                one.verdict = "RE";
+                out.cases.push_back(std::move(one));
+                break;
+            }
+            one.verdict = "OK";
+            one.stdout_text = read_file_limited(stdout_path, kOutputCapBytes);
+            out.cases.push_back(std::move(one));
+        }
+        out.status = "OK";
+        return out;
+#endif
     }
 
 private:

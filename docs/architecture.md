@@ -154,7 +154,7 @@ public:
 
 Phase B 实现类：
 
-- `DockerJudgeSandbox`：通过 `docker run` 启动临时容器
+- `DockerJudgeSandbox`：通过 `docker run` 启动临时容器（编译一次 + 单容器跑完全部用例，容器内计时并记录内存）
 - （可选）`RemoteJudgeSandbox`：HTTP 调用独立沙箱服务
 
 ### 6.2 Docker 安全约束

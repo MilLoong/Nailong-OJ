@@ -2,33 +2,42 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace nloj::judge {
 
-// 沙箱一次调用：compile_only=1 只编译；否则用已编译产物跑一组输入。
-struct SandboxRequest {
+// 一次判题请求：编译代码后，在单个沙箱（容器）里按顺序跑完全部用例。
+// inputs 按题目 sort_order 排序，用例序号从 1 起。
+struct SandboxJudgeRequest {
     std::string language;      // 目前只支持 CPP
-    std::string code;          // 编译时用
-    std::string stdin_data;    // 运行时喂给程序
-    int time_limit_ms;         // 运行超时
-    int memory_limit_kb;       // Docker --memory
-    int compile_only;          // 1 只编译 0 运行
+    std::string code;          // 待判代码
+    int time_limit_ms;         // 单个用例的运行超时
+    int memory_limit_kb;       // 单个用例内存上限（Docker --memory）
+    std::vector<std::string> inputs;  // 全部用例输入
 };
 
-// 沙箱结果。verdict: OK | CE | TLE | MLE | RE | SYSTEM_ERROR
-struct SandboxResult {
-    std::string verdict;
-    std::string stdout_text;
-    std::string stderr_text;
-    int time_used_ms;
-    int memory_used_kb;  // 测不到时为 -1
+// 单个用例的运行结果。verdict: OK | TLE | MLE | RE | SE
+struct SandboxCaseResult {
+    int index;                 // 用例序号，从 1 起，与 inputs 对应
+    std::string verdict;       // 运行结论
+    int time_used_ms;          // 容器内实测耗时
+    int memory_used_kb;        // 子进程 ru_maxrss；测不到为 -1
+    std::string stdout_text;   // 实际输出（宿主侧做 WA 比对）
 };
 
-// 判题沙箱。Docker 实现为主，本机进程为降级。
+// 判题结果。status: OK | CE | SYSTEM_ERROR
+// status=OK 时 cases 与 inputs 顺序对应；首个失败用例后不再有后续用例。
+struct SandboxJudgeResult {
+    std::string status;                // OK=编译过且已跑；CE/SYSTEM_ERROR 见 error_text
+    std::string error_text;            // CE 编译错误 / SYSTEM_ERROR 原因（截断）
+    std::vector<SandboxCaseResult> cases;  // 顺序与 inputs 对应
+};
+
+// 判题沙箱：编译一次 + 单容器按顺序跑完全部用例，容器内逐用例计时并记录内存。
 class JudgeSandbox {
 public:
     virtual ~JudgeSandbox() = default;
-    virtual SandboxResult execute(const SandboxRequest& request) = 0;
+    virtual SandboxJudgeResult judge(const SandboxJudgeRequest& request) = 0;
 };
 
 // 优先 Docker；docker 不可用时退回本机 g++（无隔离，仅演示）。

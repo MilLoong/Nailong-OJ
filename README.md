@@ -14,10 +14,10 @@
 | 语言     | C++20                    | 高性能后台，腾讯后台常见语言                |
 | HTTP   | cpp-httplib              | 轻量 REST，无 Boost 依赖            |
 | JSON   | nlohmann/json            | 请求/响应序列化                      |
-| 数据库    | MySQL 8 + libmysqlclient | 连接池，查询转义/预处理防注入               |
+| 数据库    | MySQL 8 + libmysqlclient | 连接池；登录注册预处理，其余转义拼接           |
 | 缓存     | Redis（RESP 直连）           | 题目详情 String 缓存；连不上 6379 则跳过 |
 | 消息队列   | RabbitMQ + rabbitmq-c    | 异步判题、削峰填谷                     |
-| 鉴权     | jwt-cpp + OpenSSL        | HS256 JWT                     |
+| 鉴权     | OpenSSL HMAC-SHA256      | 手写 HS256 JWT；payload 用 nlohmann |
 | 密码     | PBKDF2-HMAC-SHA256       | OpenSSL 实现                    |
 | API 文档 | OpenAPI 3                | `docs/openapi.yaml`           |
 | 判题沙箱   | Docker（Phase B）          | 隔离运行不可信代码                     |
@@ -37,6 +37,8 @@ MyProject/
     ├── README.md
     ├── CMakeLists.txt          # CMake 父工程
     ├── docker-compose.yml
+    ├── config.example.json     # 复制为 config.json 或设 NLOJ_CONFIG
+    ├── .github/workflows/ci.yml
     ├── sql/
     │   └── schema.sql
     ├── docs/
@@ -127,7 +129,7 @@ rabbitmqctl set_permissions -p / nloj ".*" ".*" ".*"
 
 应用配置仍指向 `127.0.0.1`，不必改文档里的端口。
 
-> Phase B 的 **Docker 代码沙箱**才真正需要 Docker。到那一步再装 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 即可；前期判题也可以先做成「本机受限进程」做演示。
+判题沙箱需要 [Docker Desktop](https://www.docker.com/products/docker-desktop/) 与镜像 `gcc:13-bookworm`（`docker pull gcc:13-bookworm`）。`docker version` 连不上时才降级本机 g++（无隔离，仅演示）。注意：自定义 WSL 内核若缺 `iso9660`，Desktop 会卡在 Start engine，需先去掉 `.wslconfig` 里的 `kernel=`。
 
 
 
@@ -146,7 +148,11 @@ mysql -h 127.0.0.1 -u nloj -pnloj123456 nloj_db < sql/schema.sql
 
 
 
-### 应用配置参考（自行实现时使用）
+### 应用配置
+
+启动时读 `NLOJ_CONFIG` 指定的 JSON，否则读当前目录 `config.json`，再用环境变量覆盖。示例见 [config.example.json](config.example.json)。常用变量：`NLOJ_MYSQL_*`、`NLOJ_JWT_SECRET`、`NLOJ_HTTP_PORT`、`NLOJ_RABBITMQ_*`、`NLOJ_REDIS_*`。
+
+示例（与默认开发环境一致）：
 
 ```json
 {
@@ -227,7 +233,7 @@ $env:NLOJ_EMBED_WORKER = "0"
 - **用户**：注册、登录（JWT 或 Redis Session）、获取当前用户
 - **题目**：分页列表、详情、管理员 CRUD、样例用例展示
 - **提交**：提交代码 → 落库 PENDING → 发 MQ → 返回 submissionId
-- **判题**：消费 MQ → Docker 沙箱编译运行 → 比对用例 → 更新 AC/WA/TLE 等
+- **判题**：消费 MQ → 沙箱编译 + 单容器跑完全部用例（容器内计时、记录内存）→ 比对用例 → 更新 AC/WA/TLE 等
 
 
 
@@ -265,7 +271,7 @@ $env:NLOJ_EMBED_WORKER = "0"
 - [x] 题目 CRUD + 分页（`nl-problem` 领域逻辑 + DB 联调测试）
 - [x] 提交（create/get/list + MQ 投递；`nl-submit` DB 联调测试）
 - [x] RabbitMQ 异步判题（`rabbitmq-c`；连不上 5672 降级进程内队列；`nloj_common_mq_test`）
-- [x] Docker 沙箱（CPP；无 Docker 时本机 g++ 降级；`nl-judge` DB 联调测试）
+- [x] Docker 沙箱（`gcc:13-bookworm`；`--network=none --memory --pids-limit=64`；编译一次 + 单容器跑完全部用例，容器内逐用例计时并用 `ru_maxrss` 记录内存、`memory_used` 落库；无 Docker 时本机 g++ 降级；本机 Desktop 已跑通 `nloj_judge_db_test` AC/WA/CE + `nloj_api_e2e_test`）
 - [x] HTTP 接入（`nl-api` cpp-httplib 路由 / 统一 code-message-data；`nloj_api_http_test`；Swagger UI `/api/docs`）
 - [x] HTTP 全链路集成（进程内起服务打注册/建题/提交/判题；`nloj_api_e2e_test`）
 
@@ -278,6 +284,7 @@ $env:NLOJ_EMBED_WORKER = "0"
 - [x] 管理员权限拦截（建题 / 改题；无权限 `40101`）
 - [x] 压测 + 故障注入数据（`nloj_api_bench` + `scripts/bench.ps1`；报告 [bench-report.md](docs/bench-report.md)）
 - [x] 单元测试 / 联调测试（crypto / DB / MQ / Redis / HTTP JSON / `nloj_api_e2e_test`）
+- [x] 工程化：MySQL 连接池、`config.json`/环境变量、领域 `AppError`、MQ/JWT 用 nlohmann、GitHub Actions CI
 
 
 
