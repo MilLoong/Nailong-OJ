@@ -66,6 +66,7 @@
 - `--pids-limit` 防 fork bomb
 - 超时强杀进程
 - 运行阶段只读文件系统
+- 编译一次后**单容器跑完全部用例**（不是每个用例起一个容器），容器内逐用例计时，用 `wait4/ru_maxrss` 记录内存峰值，`time_used` / `memory_used` 真实落库
 
 生产级 OJ 还会用 nsjail / cgroup v2 / gVisor，本质都是内核隔离 + 资源配额。
 
@@ -138,6 +139,53 @@
 
 **答**：连接用 RAII 包装，`ConnectionGuard` 析构时归还池中。池内部用 `mutex` + `condition_variable` 保护空闲队列。HTTP 线程只负责写库和投递消息，判题在独立消费者线程，共享状态（池、缓存）都有锁或按连接租借。
 
+### Q12（迭代）：判题为什么从「每个用例起一个容器」改成「单容器跑全部用例」？
+
+**答**：`docker run` 每次有容器启动/挂载开销，N 个用例 = 1 次编译 + N 个容器，而且每用例计时会把容器启动也算进去，测得不准。改成：编译一个容器 + 运行阶段**一个容器**里由 runner 按顺序 `fork ./main` 喂入各用例输入，容器内逐用例计时。
+
+追问1：为什么编译和运行不并成一个容器？——编译要放开内存下限（给 g++ 至少 512MB，防止误杀编译），运行要严格按题面 limit 判 MLE，两种限制不能在同一 cgroup 里共存，所以拆两个容器。
+追问2：超时怎么判？——runner 自己掐表（steady_clock），到点主动 `SIGKILL` 记为 TLE；外部 SIGKILL（容器 OOM）才是 MLE。这样 TLE/MLE 不会混。
+追问3：WA 为什么不在容器里判？——输出归一化（去 `\r`、行尾空白、末尾空行）只有一份实现（`judge_outputs_match`），放在宿主侧避免 runner 与宿主两套规则漂移。
+
+### Q13（迭代）：判题结果里的 time_used / memory_used 现在可信吗？
+
+**答**：time 是容器内实测耗时（不含 Docker 启动），memory 是 `wait4` 拿到的子进程 `ru_maxrss`（KB），AC 记全用例峰值，失败用例记该用例实测值。改之前 `memory_used` 一直是 NULL——只靠容器 OOM 判 MLE，从不落真实值，这是当时的短板。
+
+追问1：Windows 本机降级路径为什么 memory 还是 NULL？——Windows 没有 `getrusage`，降级路径诚实记 -1（不编造数字），Linux/容器路径才有真实值。
+追问2：计时有没有误差？——runner 每 2ms 轮询 `wait4`，边界上可能多放行 ~2ms 的越限；OJ 判题普遍可接受，要更严可以用 `setitimer`/`prlimit`。
+
+### Q14（迭代）：Redis 抖动一次缓存就永久失效，这种坑你怎么发现/怎么修？
+
+**答**：原实现启动时探测一次 Redis，之后任何一次读写下失败就把 `g_use_redis` 永久置 0——进程内 Redis 缓存从此关掉，还表现为「health 显示 UP 但缓存实际失效」。改成故障状态机：失败 → 关闭连接并进入 **5s 冷却**，冷却过后自动重连探测，恢复即重新启用（日志只在状态翻转时打一次）。
+
+追问1：为什么失败后不立即重连？——每次 connect 有阻塞/占锁代价，Redis 挂掉时会让每个请求都卡一下，冷却 5s 是「尽快恢复」和「别熔断自损」的折中。
+追问2：冷却期间请求怎么办？——读写直接返回 0，业务层照旧回源 MySQL（缓存本来就是加速层），L1 进程内缓存仍在。
+追问3：怎么保证能自动发现这个 bug？——需要"断 Redis → 观察 → 恢复 Redis → 观察"的联调用例，属于测试基建缺口，已记录。
+
+### Q15（迭代）：JWT 的 secret 写在代码里当兜底默认值有什么风险？
+
+**答**：原来 `auth_crypto` 里硬编码 `"nloj-dev-secret-change-me"`，配置缺 secret 时静默退回它——任何知道代码的人都能用这个公开密钥伪造 admin token。改成：**secret 为空一律拒绝**（签发返回空、验签直接失败，防空密钥伪造），去掉头文件默认参数逼调用方显式传；`nloj_api` 启动时空 secret 直接拒绝启动，等于开发默认值则打 warning。
+
+追问1：为什么用对称 HMAC-SHA256 不用 RS256？——HS256 简单够用、无公钥分发；多服务各自验签要独立鉴权服务时再考虑 RS256/密钥管理。
+追问2：验签为什么安全？——只重算 header.payload 的 HMAC 与第三段做常量时间比较，不信任 header 里的 alg，天然免疫 `alg=none`/算法混淆。
+追问3：密钥怎么换？——`NLOJ_JWT_SECRET` 环境变量注入，代码/仓库只留 `config.example.json`；JWT 无状态，轮换要等旧 token 过期或引入 key id。
+
+### Q16（迭代）：提交接口为什么限 64KB？
+
+**答**：`submission.code` 是 MEDIUMTEXT（上限约 16MB），不限长的话超大请求能撑爆 DB 行、判题沙箱写盘和带宽。校验放在领域层 `create_submission`，超限按参数错误（40000）拒绝，HTTP 层无需感知。
+
+追问：还有哪些输入该限？——题面/用例长度、HTTP body 上限、判题输出读取上限（现为每用例 256KB）、`judge_info` 截断 500 字符。安全边界的思路是"每一层都假设上层不可信"。
+
+### Q17（迭代）：你的 CI 是真跑测试还是"看起来绿"？
+
+**答**：踩过坑——各子模块各自 `enable_testing()`，根目录没有 `CTestTestfile.cmake`，在 build 根目录跑 `ctest` 会报 "No tests were found"（其实根本没跑任何测试）。已在顶层补 `enable_testing()`，现在根目录 `ctest` 能发现全部 11 个测试。
+
+追问：怎么防止以后又静默不跑？——CI 里用 `ctest --output-on-failure` 并把"0 tests"当失败处理（断言测试数），这是教训：**CI 绿不代表被测过，要看有没有测试被执行**。
+
+### Q18（软实力）：讲一个「发现旧设计有坑 → 重做」的例子
+
+**答**：三个素材任选其一，按 STAR 讲：① 判题每用例一个 Docker 容器、计时含启动开销、memory 恒 NULL → 重做成单容器 runner + 容器内计时 + `ru_maxrss`；② Redis 断线一次永久降级 → 冷却自动重连状态机；③ JWT 硬编码默认密钥兜底 → 空密钥 fail-fast + 启动校验。重点讲**怎么发现的**（读代码/故障注入/压测对照），**改动的代价**（多一次 wait4 轮询、多一层状态机），以及**哪些还没验证**（本机 Docker 引擎起不来，judge 联调要在 Linux CI 覆盖）——诚实说短板反而加分。
+
 ---
 
 ## 4. 腾讯后台校招 — 本项目覆盖的知识点
@@ -187,4 +235,8 @@ NLOJ 在线判题后端 | C++20 / CMake / MySQL / Redis / RabbitMQ / Docker
 - [ ] 提交后 status 从 PENDING → JUDGING → AC/WA
 - [ ] 恶意代码（死循环）被判为 TLE
 - [ ] fork bomb 被 pids-limit 拦截
+- [ ] judge_db 跑通后 `submission.memory_used` 有真实值（非 NULL）
+- [ ] 停 Redis 后缓存失效、恢复后 5s 内自动重连（health 回 UP）
+- [ ] 提交 >64KB 代码被 40000 拒绝
+- [ ] 空 `jwt_secret` 启动直接拒绝
 - [ ] 能用 STAR 在 3 分钟内讲清架构
