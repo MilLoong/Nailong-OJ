@@ -2,6 +2,9 @@
 cmake_minimum_required(VERSION 3.22)
 project(nloj VERSION 0.1.0 LANGUAGES C CXX)
 
+# 顶层开 testing：build 根目录 ctest 才能发现各子模块注册的测试
+enable_testing()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

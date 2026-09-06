@@ -1,5 +1,7 @@
 #include "nloj/user/auth_crypto.h"
 
+#include <nlohmann/json.hpp>
+
 #include <chrono>
 #include <iomanip>
 #include <sstream>
@@ -18,7 +20,6 @@ constexpr int kPbkdf2Iterations = 100000;  // 迭代次数
 constexpr int kSaltLen = 16;               // 盐长度
 constexpr int kHashLen = 32;               // SHA-256 输出长度
 constexpr int kJwtExpireHours = 24;
-const std::string kJwtSecret = "nloj-dev-secret-change-me";
 
 std::string to_hex(const unsigned char* data, std::size_t len) {
     std::ostringstream oss;
@@ -119,12 +120,15 @@ std::string base64url_decode(std::string text) {
     return out;
 }
 
-// 用 kJwtSecret 对 signing_input 做 HMAC-SHA256。成功返回 1。
-int hmac_sha256(const std::string& signing_input, unsigned char* mac, unsigned int* mac_len) {
+// 对 signing_input 做 HMAC-SHA256。成功返回 1。
+int hmac_sha256(const std::string& secret,
+                const std::string& signing_input,
+                unsigned char* mac,
+                unsigned int* mac_len) {
     if (HMAC(
             EVP_sha256(),
-            kJwtSecret.data(),
-            static_cast<int>(kJwtSecret.size()),
+            secret.data(),
+            static_cast<int>(secret.size()),
             reinterpret_cast<const unsigned char*>(signing_input.data()),
             signing_input.size(),
             mac,
@@ -206,29 +210,47 @@ int verify_password(const std::string& password, const std::string& stored_hash)
     return std::vector<unsigned char>(digest_login, digest_login + kHashLen) == digest_store ? 1 : 0;
 }
 
-std::string sign_hs256_jwt(
-    std::int64_t user_id, const std::string& username, const std::string& role) {
+std::string sign_hs256_jwt(std::int64_t user_id,
+                           const std::string& username,
+                           const std::string& role,
+                           const std::string& secret) {
     // HS256：HMAC-SHA256(secret, header.payload)，再拼成三方 JWT。
+    // secret 为空直接失败：不退回已知开发默认密钥（调用方应传配置密钥）。
+    if (secret.empty()) {
+        return {};
+    }
     const auto now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
     const auto exp = now + static_cast<std::time_t>(kJwtExpireHours) * 3600;
 
     const std::string header = R"({"alg":"HS256","typ":"JWT"})";
-    const std::string payload = std::string("{") + R"("iss":"nloj","uid":")" + std::to_string(user_id) +
-                                R"(","name":")" + username + R"(","role":")" + role + R"(","iat":)" +
-                                std::to_string(now) + R"(,"exp":)" + std::to_string(exp) + "}";
+    nlohmann::json payload;
+    payload["iss"] = "nloj";
+    payload["uid"] = std::to_string(user_id);
+    payload["name"] = username;
+    payload["role"] = role;
+    payload["iat"] = static_cast<std::int64_t>(now);
+    payload["exp"] = static_cast<std::int64_t>(exp);
 
-    const std::string signing_input = base64url_encode(header) + "." + base64url_encode(payload);
+    const std::string signing_input = base64url_encode(header)
+                                     + "."
+                                     + base64url_encode(payload.dump());
 
     unsigned char mac[EVP_MAX_MD_SIZE];
     unsigned int mac_len = 0;
-    if (!hmac_sha256(signing_input, mac, &mac_len)) {
+    if (!hmac_sha256(secret, signing_input, mac, &mac_len)) {
         return {};
     }
     return signing_input + "." + base64url_encode(mac, mac_len);
 }
 
-int verify_hs256_signature(const std::string& token, std::string& payload_json) {
-    // 用 kJwtSecret 重算前两段 HMAC，和第三段比对。
+int verify_hs256_signature(const std::string& token,
+                           std::string& payload_json,
+                           const std::string& secret) {
+    // 用 secret 重算前两段 HMAC，和第三段比对。
+    // secret 为空时一律拒绝：防止用空密钥伪造 token。
+    if (secret.empty()) {
+        return 0;
+    }
     const std::size_t dot1 = token.find('.');
     const std::size_t dot2 = (dot1 == std::string::npos) ? std::string::npos : token.find('.', dot1 + 1);
     if (dot1 == std::string::npos || dot2 == std::string::npos ||
@@ -242,7 +264,7 @@ int verify_hs256_signature(const std::string& token, std::string& payload_json) 
 
     unsigned char mac[EVP_MAX_MD_SIZE];
     unsigned int mac_len = 0;
-    if (!hmac_sha256(signing_input, mac, &mac_len)) {
+    if (!hmac_sha256(secret, signing_input, mac, &mac_len)) {
         return 0;
     }
     if (sig.size() != mac_len || CRYPTO_memcmp(sig.data(), mac, mac_len) != 0) {

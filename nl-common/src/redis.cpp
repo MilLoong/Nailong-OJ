@@ -1,4 +1,5 @@
 #include "nloj/common/redis.h"
+#include "nloj/common/config.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -13,6 +14,7 @@
 #include <unistd.h>
 #endif
 
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -23,8 +25,6 @@
 namespace nloj::common {
 namespace {
 
-constexpr const char* kHost = "127.0.0.1";
-constexpr int kPort = 6379;
 
 #ifdef _WIN32
 using Socket = SOCKET;
@@ -34,10 +34,14 @@ using Socket = int;
 constexpr Socket kInvalid = -1;
 #endif
 
+constexpr int kReconnectCooldownMs = 5000;  // 断线后重连尝试的冷却间隔
+
 std::mutex g_mu;
-int g_probed = 0;
-int g_use_redis = 0;
+int g_use_redis = 0;  // 1=当前可用；0=不可用（失败后按冷却间隔自动重试）
 Socket g_sock = kInvalid;
+int g_was_up = 0;              // 是否曾连上过（决定故障日志口径）
+int g_down_msg_printed = 0;    // 故障/恢复日志只打一次，状态翻转时清零
+std::chrono::steady_clock::time_point g_retry_at{};  // 下次重连尝试的最早时刻
 
 void close_sock() {
     if (g_sock == kInvalid) {
@@ -218,8 +222,9 @@ int try_connect() {
     sockaddr_in addr;
     std::memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(static_cast<u_short>(kPort));
-    inet_pton(AF_INET, kHost, &addr.sin_addr);
+    const AppConfig& cfg = app_config();
+    addr.sin_port = htons(static_cast<u_short>(cfg.redis_port));
+    inet_pton(AF_INET, cfg.redis_host.c_str(), &addr.sin_addr);
     connect(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
 
 #ifdef _WIN32
@@ -253,19 +258,39 @@ int try_connect() {
 }
 
 void ensure_backend() {
-    if (g_probed) {
+    // 已可用直接返回；不可用时按冷却间隔重试 connect，Redis 恢复后自动重连
+
+    if (g_use_redis) {
         return;
     }
-    g_probed = 1;
+    const auto now = std::chrono::steady_clock::now();
+    if (now < g_retry_at) {
+        return;  // 冷却中，避免每个请求都去 connect
+    }
     if (try_connect()) {
         g_use_redis = 1;
+        g_was_up = 1;
+        if (g_down_msg_printed) {
+            std::cout << "Redis reconnected, problem cache enabled" << std::endl;
+        }
+        g_down_msg_printed = 0;
         return;
     }
     g_use_redis = 0;
-    std::cout << "Redis unavailable, problem cache disabled" << std::endl;
+    g_retry_at = now + std::chrono::milliseconds(kReconnectCooldownMs);
+    if (!g_down_msg_printed) {
+        if (g_was_up) {
+            std::cout << "Redis connection lost, will auto-retry" << std::endl;
+        } else {
+            std::cout << "Redis unavailable, problem cache disabled" << std::endl;
+        }
+        g_down_msg_printed = 1;
+    }
 }
 
 int exec(const std::vector<std::string>& args, Reply& reply) {
+    // 探测/重连 → 发命令 → 读回复；失败则标记不可用并进入重连冷却
+
     ensure_backend();
     if (!g_use_redis || g_sock == kInvalid) {
         return 0;
@@ -273,6 +298,8 @@ int exec(const std::vector<std::string>& args, Reply& reply) {
     if (!send_all(encode_array(args)) || !read_reply(reply) || !reply.ok) {
         g_use_redis = 0;
         close_sock();
+        g_retry_at = std::chrono::steady_clock::now()
+                   + std::chrono::milliseconds(kReconnectCooldownMs);
         return 0;
     }
     return 1;

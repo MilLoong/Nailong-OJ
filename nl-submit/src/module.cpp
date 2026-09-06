@@ -2,6 +2,13 @@
 #include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 
+namespace {
+
+// 提交代码上限（64KB）。防超大请求撑爆 DB / 判题沙箱。
+constexpr std::size_t kMaxCodeBytes = 64 * 1024;
+
+}  // namespace
+
 namespace nloj::submit {
 
 const char* module_name() {
@@ -11,17 +18,21 @@ const char* module_name() {
 std::int64_t create_submission(std::int64_t user_id,
                                std::int64_t problem_id,
                                const std::string& language,
-                               const std::string& code) {
+                               const std::string& code,
+                               nloj::common::AppError* err) {
     // 校验题目存在且可见 → INSERT PENDING → 发判题消息 → 返回 submission_id
 
-    // 基本校验（language 先只放行 Phase B 的 CPP）
-    if (user_id <= 0 || problem_id <= 0 || code.empty() || language != "CPP") {
-        return -1;
+    // 基本校验（language 先只放行 Phase B 的 CPP；代码超限按参数错误拒绝）
+    if (user_id <= 0 || problem_id <= 0 || code.empty()
+     || code.size() > kMaxCodeBytes
+     || language != "CPP") {
+        nloj::common::set_error(err, nloj::common::AppError::InvalidArgument);
+        return -1;  // 代码超限也算参数错误
     }
 
-    // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return -1;
     }
 
@@ -29,44 +40,44 @@ std::int64_t create_submission(std::int64_t user_id,
     const std::string select_sql = "SELECT id FROM problem WHERE id="
                                   + std::to_string(problem_id)
                                   + " AND deleted=0 AND visible=1 LIMIT 1";
-    MYSQL_RES* result = nloj::common::query_select(&mysql, select_sql);
+    MYSQL_RES* result = nloj::common::query_select(conn.get(), select_sql);
     if (result == nullptr) {
-        mysql_close(&mysql);
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return -1;
     }
     MYSQL_ROW row = mysql_fetch_row(result);
     if (row == nullptr || row[0] == nullptr) {
         mysql_free_result(result);
-        mysql_close(&mysql);
+        nloj::common::set_error(err, nloj::common::AppError::NotFound);
         return -1;  // 题目不存在或不可见
     }
     mysql_free_result(result);
 
     // INSERT PENDING（status 默认也可，这里显式写出）
-    const std::string escaped_language = nloj::common::escape_sql(&mysql, language);
-    const std::string escaped_code = nloj::common::escape_sql(&mysql, code);
+    const std::string escaped_language = nloj::common::escape_sql(conn.get(), language);
+    const std::string escaped_code = nloj::common::escape_sql(conn.get(), code);
     const std::string insert_sql = "INSERT INTO submission (user_id, problem_id, language, code, status) VALUES ("
                                   + std::to_string(user_id) + ", "
                                   + std::to_string(problem_id) + ", '"
                                   + escaped_language + "', '"
                                   + escaped_code + "', 'PENDING')";
-    if (!nloj::common::query_exec(&mysql, insert_sql)) {
-        mysql_close(&mysql);
+    if (!nloj::common::query_exec(conn.get(), insert_sql)) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return -1;
     }
 
-    const std::int64_t submission_id = static_cast<std::int64_t>(mysql_insert_id(&mysql));
-    mysql_close(&mysql);
+    const std::int64_t submission_id = static_cast<std::int64_t>(mysql_insert_id(conn.get()));
 
-    // 发判题消息（优先 RabbitMQ，连不上则进程内队列）
     nloj::common::JudgeTaskMessage task;
     task.submission_id = submission_id;
     task.problem_id = problem_id;
     task.language = language;
     if (!nloj::common::publish_judge_task(task)) {
-        return -1;  // 已入库但投递失败（进程内实现几乎不会走到）
+        nloj::common::set_error(err, nloj::common::AppError::Internal);
+        return -1;
     }
 
+    nloj::common::set_error(err, nloj::common::AppError::Ok);
     return submission_id;
 }
 
@@ -80,8 +91,8 @@ SubmissionDetail get_submission(std::int64_t id,
     }
 
     // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return {};
     }
 
@@ -93,15 +104,13 @@ SubmissionDetail get_submission(std::int64_t id,
                                    "FROM submission WHERE id="
                                   + std::to_string(id)
                                   + " LIMIT 1";
-    MYSQL_RES* result = nloj::common::query_select(&mysql, select_sql);
+    MYSQL_RES* result = nloj::common::query_select(conn.get(), select_sql);
     if (result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
     MYSQL_ROW row = mysql_fetch_row(result);
     if (row == nullptr || row[0] == nullptr || row[1] == nullptr) {
         mysql_free_result(result);
-        mysql_close(&mysql);
         return {};  // 提交不存在
     }
 
@@ -109,7 +118,6 @@ SubmissionDetail get_submission(std::int64_t id,
     const std::int64_t owner_id = std::stoll(row[1]);
     if (viewer_user_id != owner_id && viewer_role != "admin") {
         mysql_free_result(result);
-        mysql_close(&mysql);
         return {};  // 既不是提交者，也不是管理员
     }
 
@@ -126,7 +134,6 @@ SubmissionDetail get_submission(std::int64_t id,
     detail.judge_info = row[8] != nullptr ? row[8] : "";
     detail.create_time = row[9] != nullptr ? row[9] : "";
     mysql_free_result(result);
-    mysql_close(&mysql);
     return detail;
 }
 
@@ -143,8 +150,8 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
     }
 
     // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return {};
     }
 
@@ -154,22 +161,20 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
         where_sql += " AND problem_id=" + std::to_string(problem_id);
     }
     if (!status.empty()) {
-        const std::string escaped_status = nloj::common::escape_sql(&mysql, status);
+        const std::string escaped_status = nloj::common::escape_sql(conn.get(), status);
         where_sql += " AND status='" + escaped_status + "'";
     }
 
     // COUNT total
     const std::string count_sql = "SELECT COUNT(*) FROM submission"
                                  + where_sql;
-    MYSQL_RES* count_result = nloj::common::query_select(&mysql, count_sql);
+    MYSQL_RES* count_result = nloj::common::query_select(conn.get(), count_sql);
     if (count_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
     MYSQL_ROW count_row = mysql_fetch_row(count_result);
     if (count_row == nullptr || count_row[0] == nullptr) {
         mysql_free_result(count_result);
-        mysql_close(&mysql);
         return {};
     }
     const std::int64_t total = std::stoll(count_row[0]);
@@ -184,9 +189,8 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
                                 + std::to_string(page_size)
                                 + " OFFSET "
                                 + std::to_string(offset);
-    MYSQL_RES* list_result = nloj::common::query_select(&mysql, list_sql);
+    MYSQL_RES* list_result = nloj::common::query_select(conn.get(), list_sql);
     if (list_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
 
@@ -212,7 +216,6 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
         page.records.push_back(item);
     }
     mysql_free_result(list_result);
-    mysql_close(&mysql);
     return page;
 }
 
