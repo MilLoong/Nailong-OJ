@@ -15,6 +15,8 @@ find_path(MYSQL_INCLUDE_DIR
         "C:/Program Files/MySQL/MySQL Server 8.4"
         "C:/Program Files/MySQL/MySQL Server 8.0"
         "C:/Program Files/MySQL/MySQL Server 9.0"
+        /usr/include
+        /usr/include/mysql
 )
 find_library(MYSQL_LIBRARY
     NAMES libmysql mysqlclient libmysqlclient
@@ -25,6 +27,8 @@ find_library(MYSQL_LIBRARY
         "C:/Program Files/MySQL/MySQL Server 8.4"
         "C:/Program Files/MySQL/MySQL Server 8.0"
         "C:/Program Files/MySQL/MySQL Server 9.0"
+        /usr/lib
+        /usr/lib/x86_64-linux-gnu
 )
 if(NOT MYSQL_INCLUDE_DIR OR NOT MYSQL_LIBRARY)
     message(FATAL_ERROR
@@ -61,17 +65,38 @@ if(MSVC AND TARGET rabbitmq-static)
     target_compile_options(rabbitmq-static PRIVATE /W3)
 endif()
 
-add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp)
+set(NLOJ_JSON_HPP "${CMAKE_SOURCE_DIR}/third_party/nlohmann/json.hpp")
+if(NOT EXISTS "${NLOJ_JSON_HPP}")
+    find_program(NLOJ_CURL NAMES curl curl.exe)
+    if(NOT NLOJ_CURL)
+        message(FATAL_ERROR "缺少 nlohmann/json.hpp，且找不到 curl")
+    endif()
+    file(MAKE_DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/nlohmann")
+    execute_process(
+        COMMAND "${NLOJ_CURL}" -L --retry 3 -o "${NLOJ_JSON_HPP}"
+                "https://raw.githubusercontent.com/nlohmann/json/v3.11.3/single_include/nlohmann/json.hpp"
+        RESULT_VARIABLE _nloj_json_rc
+    )
+    if(NOT _nloj_json_rc EQUAL 0)
+        message(FATAL_ERROR "下载 nlohmann/json.hpp 失败")
+    endif()
+endif()
+
+add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp src/config.cpp)
 target_include_directories(nl-common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${MYSQL_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/third_party
 )
 target_link_libraries(nl-common PUBLIC ${MYSQL_LIBRARY} rabbitmq-static)
 if(WIN32)
     target_link_libraries(nl-common PUBLIC ws2_32)
 endif()
 target_compile_features(nl-common PUBLIC cxx_std_20)
+if(MSVC)
+    target_compile_definitions(nl-common PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
 
 set(NLOJ_MYSQL_LIBRARY "${MYSQL_LIBRARY}" CACHE FILEPATH "MySQL client library" FORCE)
 
