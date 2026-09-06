@@ -111,7 +111,7 @@ AuthUser get_current_user(const std::string& user_id);
 
 | | |
 |--|--|
-| 入参 | `CreateProblemRequest`：title/difficulty/description/time_limit/memory_limit/visible |
+| 入参 | `CreateProblemRequest`：title/difficulty/description/time_limit/memory_limit/visible；可选 problem_type / judge_mode / extra_code |
 | 返回 | 成功新题 `id>0`；失败 `-1` |
 | API `data` | 该 id |
 | 表 | INSERT `problem`（用例可后续再扩；Phase B 可先只建题） |

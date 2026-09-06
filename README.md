@@ -40,7 +40,8 @@ MyProject/
     ├── config.example.json     # 复制为 config.json 或设 NLOJ_CONFIG
     ├── .github/workflows/ci.yml
     ├── sql/
-    │   └── schema.sql
+    │   ├── schema.sql
+    │   └── migrate_v2_judge_types.sql   # 已有库加题型 / SPJ 字段
     ├── docs/
     │   ├── architecture.md
     │   ├── api.md
@@ -50,7 +51,8 @@ MyProject/
     ├── scripts/
     │   └── bench.ps1              # 读题压测；原始数字写 bench-report.generated.md
     ├── deploy/
-    │   └── nginx.conf             # 反向代理 + 提交限流示例
+    │   ├── nginx.conf             # 反向代理 + 提交限流示例
+    │   └── judge.Dockerfile       # C/C++/Python/Java 判题镜像（可选）
     ├── nl-common/              # 公共模块：工具类、错误码/枚举、Result/分页、第三方与基础设施封装、配置常量
     ├── nl-user/                # 用户模块：注册、登录、鉴权
     ├── nl-problem/             # 题目模块：CRUD、用例
@@ -231,9 +233,9 @@ $env:NLOJ_EMBED_WORKER = "0"
 ## 核心功能
 
 - **用户**：注册、登录（JWT 或 Redis Session）、获取当前用户
-- **题目**：分页列表、详情、管理员 CRUD、样例用例展示
-- **提交**：提交代码 → 落库 PENDING → 发 MQ → 返回 submissionId
-- **判题**：消费 MQ → 沙箱编译 + 单容器跑完全部用例（容器内计时、记录内存）→ 比对用例 → 更新 AC/WA/TLE 等
+- **题目**：分页列表、详情、管理员 CRUD、样例用例展示；题型 `STANDARD` / `INTERACTIVE` / `COMMUNICATION`，比对 `EXACT` / `SPJ`
+- **提交**：提交代码 → 落库 PENDING → 发 MQ → 返回 submissionId；语言 `CPP` / `C` / `PYTHON` / `JAVA`
+- **判题**：消费 MQ → 沙箱编译 + 单容器跑完全部用例（容器内计时、记录内存）→ 精确比对 / SPJ / 交互器 / 通信管理器 → 更新 AC/WA/TLE 等
 
 
 
@@ -296,7 +298,51 @@ $env:NLOJ_EMBED_WORKER = "0"
 
 
 
-路线图到此结束。后续若继续，属于加分项（限流进进程、WebSocket 推结果、SPJ 等），不是未完成的 Phase。
+### Phase E：多语言 / 题型 / Special Judge
+
+约定（实现按此写，测通后再勾）：
+
+**语言**（`submission.language`）
+
+| 语言 | 源文件 | 编译 | 运行 |
+|------|--------|------|------|
+| `CPP` | `main.cpp` | `g++ -O2 -std=c++17` | `./main` |
+| `C` | `main.c` | `gcc -O2` | `./main` |
+| `PYTHON` | `main.py` | 无 | `python3 main.py` |
+| `JAVA` | `Main.java` | `javac` | `java Main`（必须 `public class Main`） |
+
+Docker 默认仍用 `gcc:13-bookworm`（C/C++）。要在容器里跑 Python/Java，可先构建 `deploy/judge.Dockerfile` 得到 `nloj-judge:bookworm`；没有该镜像时这两种语言走本机解释器/JDK（与 C++ 降级一样，无隔离）。
+
+**题型**（`problem.problem_type`，详情/列表可见；`extra_code` 只给判题机，不进公开 API）
+
+| 题型 | 含义 | `extra_code` |
+|------|------|----------------|
+| `STANDARD` | 读 stdin、写 stdout（默认） | `judge_mode=SPJ` 时为 checker |
+| `INTERACTIVE` | 交互器与用户程序双向管道 | 交互器（C++）：`./interactor in_k.txt`，stdin/stdout 接用户程序；退出 0=AC，非 0=WA |
+| `COMMUNICATION` | Alice / Bob 两个程序 + 管理器 | 管理器（C++）：`./manager in_k.txt alice_in alice_out bob_in bob_out`；退出 0=AC。用户代码用分隔符拆成两份 |
+
+通信题提交格式（一份 `code` 里两段）：
+
+```
+===NLOJ_FILE:alice===
+... Alice 源码 ...
+===NLOJ_FILE:bob===
+... Bob 源码 ...
+```
+
+交互 / 通信的用户程序目前只接受 `CPP` / `C`（单一可执行文件，方便和交互器/管理器接管道）。
+
+**Special Judge**（`problem.judge_mode`）
+
+- `EXACT`：宿主侧 `judge_outputs_match`（去 `\r`、行尾空白、末尾空行）
+- `SPJ`：`extra_code` 编成 `./checker in.txt user_out.txt ans.txt`；退出 0=AC，非 0=WA。构造题（多解）用这个。SPJ 是出题人代码，信任侧编译运行。
+
+已有库执行：`sql/migrate_v2_judge_types.sql`（进程里建题时也会补列）。
+
+- [x] 语言：C / Python / Java（提交校验 + 沙箱编译运行；`nloj_judge_language_test` + `nloj_judge_db_test` 本机 AC）
+- [x] Special Judge（`judge_mode=SPJ` + 宿主侧 checker；构造题 AC/WA）
+- [x] 交互题（`problem_type=INTERACTIVE`；Linux runner / Docker。Windows 无 Linux runner 时跳过）
+- [x] 通信题（`problem_type=COMMUNICATION`；同上）
 
 ## License
 

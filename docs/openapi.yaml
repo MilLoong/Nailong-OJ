@@ -467,6 +467,17 @@ components:
         visible:
           type: integer
           default: 1
+        problemType:
+          type: string
+          enum: [STANDARD, INTERACTIVE, COMMUNICATION]
+          default: STANDARD
+        judgeMode:
+          type: string
+          enum: [EXACT, SPJ]
+          default: EXACT
+        extraCode:
+          type: string
+          description: SPJ checker / interactor / manager; not returned on GET
 
     ProblemSummary:
       type: object
@@ -487,6 +498,10 @@ components:
         createTime:
           type: string
           format: date-time
+        problemType:
+          type: string
+        judgeMode:
+          type: string
 
     ProblemCaseVO:
       type: object
@@ -537,7 +552,7 @@ components:
           format: int64
         language:
           type: string
-          enum: [CPP, JAVA, PYTHON, GO]
+          enum: [CPP, C, PYTHON, JAVA]
         code:
           type: string
 

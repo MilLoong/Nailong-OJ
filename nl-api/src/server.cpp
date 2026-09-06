@@ -1,6 +1,7 @@
 #include "server.h"
 
 #include "http_json.h"
+#include "nloj/common/error.h"
 #include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 #include "nloj/common/redis.h"
@@ -236,6 +237,21 @@ int read_problem_body(const nlohmann::json& j, nloj::problem::CreateProblemReque
     } else {
         req.visible = 1;
     }
+    if (j.contains("problemType")) {
+        if (!read_string_field(j, "problemType", req.problem_type)) {
+            return 0;
+        }
+    }
+    if (j.contains("judgeMode")) {
+        if (!read_string_field(j, "judgeMode", req.judge_mode)) {
+            return 0;
+        }
+    }
+    if (j.contains("extraCode")) {
+        if (!read_string_field(j, "extraCode", req.extra_code)) {
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -257,16 +273,23 @@ nlohmann::json json_problem_summary(const nloj::problem::ProblemSummary& p) {
     j["memoryLimit"] = p.memory_limit;
     j["visible"] = p.visible;
     j["createTime"] = p.create_time;
+    j["problemType"] = p.problem_type.empty() ? "STANDARD" : p.problem_type;
+    j["judgeMode"] = p.judge_mode.empty() ? "EXACT" : p.judge_mode;
     return j;
 }
 
 nlohmann::json json_problem_detail(const nloj::problem::ProblemDetail& p) {
-    nlohmann::json j = json_problem_summary(
-        nloj::problem::ProblemSummary{
-            p.id, p.title, p.difficulty, p.time_limit, p.memory_limit, p.visible,
-            p.create_time
-        }
-    );
+    nloj::problem::ProblemSummary sum;
+    sum.id = p.id;
+    sum.title = p.title;
+    sum.difficulty = p.difficulty;
+    sum.time_limit = p.time_limit;
+    sum.memory_limit = p.memory_limit;
+    sum.visible = p.visible;
+    sum.create_time = p.create_time;
+    sum.problem_type = p.problem_type;
+    sum.judge_mode = p.judge_mode;
+    nlohmann::json j = json_problem_summary(sum);
     j["description"] = p.description;
     nlohmann::json samples = nlohmann::json::array();
     for (const auto& s : p.samples) {
@@ -338,11 +361,8 @@ void register_http_routes(httplib::Server& svr) {
 
     // GET /api/v1/health
     svr.Get("/api/v1/health", [](const httplib::Request&, httplib::Response& res) {
-        MYSQL mysql;
-        const int mysql_ok = nloj::common::start_mysql(mysql) ? 1 : 0;
-        if (mysql_ok) {
-            mysql_close(&mysql);
-        }
+        nloj::common::MysqlConn mysql;
+        const int mysql_ok = mysql.ok();
         nlohmann::json data;
         data["mysql"] = mysql_ok ? "UP" : "DOWN";
         data["redis"] = nloj::common::redis_using() ? "UP" : "DOWN";
@@ -384,9 +404,12 @@ void register_http_routes(httplib::Server& svr) {
             write_body(res, nloj::api::json_err(40000, "请求参数错误"));
             return;
         }
-        const std::int64_t id = nloj::user::register_user(username, password);
+        nloj::common::AppError err = nloj::common::AppError::Internal;
+        const std::int64_t id = nloj::user::register_user(username, password, &err);
         if (id <= 0) {
-            write_body(res, nloj::api::json_err(50001, "操作失败"));
+            write_body(res, nloj::api::json_err(
+                nloj::common::http_code(err), nloj::common::http_message(err)
+            ));
             return;
         }
         write_body(res, nloj::api::json_ok(id));
@@ -406,9 +429,12 @@ void register_http_routes(httplib::Server& svr) {
             write_body(res, nloj::api::json_err(40000, "请求参数错误"));
             return;
         }
-        const nloj::user::LoginResult login = nloj::user::login_user(username, password);
+        nloj::common::AppError err = nloj::common::AppError::WrongPassword;
+        const nloj::user::LoginResult login = nloj::user::login_user(username, password, &err);
         if (login.token.empty()) {
-            write_body(res, nloj::api::json_err(50001, "用户名或密码错误"));
+            write_body(res, nloj::api::json_err(
+                nloj::common::http_code(err), nloj::common::http_message(err)
+            ));
             return;
         }
         nlohmann::json data;
@@ -495,9 +521,12 @@ void register_http_routes(httplib::Server& svr) {
             write_body(res, nloj::api::json_err(40000, "请求参数错误"));
             return;
         }
-        const std::int64_t id = nloj::problem::create_problem(create_req);
+        nloj::common::AppError err = nloj::common::AppError::Internal;
+        const std::int64_t id = nloj::problem::create_problem(create_req, &err);
         if (id <= 0) {
-            write_body(res, nloj::api::json_err(50001, "操作失败"));
+            write_body(res, nloj::api::json_err(
+                nloj::common::http_code(err), nloj::common::http_message(err)
+            ));
             return;
         }
         write_body(res, nloj::api::json_ok(id));
@@ -524,8 +553,11 @@ void register_http_routes(httplib::Server& svr) {
             write_body(res, nloj::api::json_err(40000, "请求参数错误"));
             return;
         }
-        if (!nloj::problem::update_problem(id, update_req)) {
-            write_body(res, nloj::api::json_err(50001, "操作失败"));
+        nloj::common::AppError err = nloj::common::AppError::Internal;
+        if (!nloj::problem::update_problem(id, update_req, &err)) {
+            write_body(res, nloj::api::json_err(
+                nloj::common::http_code(err), nloj::common::http_message(err)
+            ));
             return;
         }
         write_body(res, nloj::api::json_ok(nullptr));
@@ -551,11 +583,14 @@ void register_http_routes(httplib::Server& svr) {
             write_body(res, nloj::api::json_err(40000, "请求参数错误"));
             return;
         }
+        nloj::common::AppError err = nloj::common::AppError::Internal;
         const std::int64_t id = nloj::submit::create_submission(
-            user.id, problem_id, language, code
+            user.id, problem_id, language, code, &err
         );
         if (id <= 0) {
-            write_body(res, nloj::api::json_err(50001, "操作失败"));
+            write_body(res, nloj::api::json_err(
+                nloj::common::http_code(err), nloj::common::http_message(err)
+            ));
             return;
         }
         nlohmann::json data;

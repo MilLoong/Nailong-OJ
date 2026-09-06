@@ -9,20 +9,24 @@ namespace nloj::judge {
 // 一次判题请求：编译代码后，在单个沙箱（容器）里按顺序跑完全部用例。
 // inputs 按题目 sort_order 排序，用例序号从 1 起。
 struct SandboxJudgeRequest {
-    std::string language;      // 目前只支持 CPP
+    std::string language;      // CPP | C | PYTHON | JAVA
     std::string code;          // 待判代码
     int time_limit_ms;         // 单个用例的运行超时
     int memory_limit_kb;       // 单个用例内存上限（Docker --memory）
     std::vector<std::string> inputs;  // 全部用例输入
+    std::string problem_type;  // STANDARD | INTERACTIVE | COMMUNICATION；空=STANDARD
+    std::string judge_mode;    // EXACT | SPJ；空=EXACT
+    std::string extra_code;    // SPJ checker / 交互器 / 通信管理器
+    std::vector<std::string> expecteds;  // SPJ 用的标准输出（与 inputs 对齐）
 };
 
-// 单个用例的运行结果。verdict: OK | TLE | MLE | RE | SE
+// 单个用例的运行结果。verdict: OK | WA | TLE | MLE | RE | SE
 struct SandboxCaseResult {
     int index;                 // 用例序号，从 1 起，与 inputs 对应
     std::string verdict;       // 运行结论
     int time_used_ms;          // 容器内实测耗时
     int memory_used_kb;        // 子进程 ru_maxrss；测不到为 -1
-    std::string stdout_text;   // 实际输出（宿主侧做 WA 比对）
+    std::string stdout_text;   // 实际输出（STANDARD+EXACT 时宿主侧比对）
 };
 
 // 判题结果。status: OK | CE | SYSTEM_ERROR
@@ -40,8 +44,9 @@ public:
     virtual SandboxJudgeResult judge(const SandboxJudgeRequest& request) = 0;
 };
 
-// 优先 Docker；docker 不可用时退回本机 g++（无隔离，仅演示）。
+// 按语言选沙箱：Docker 镜像缺 Python/Java 时退回本机。
 std::unique_ptr<JudgeSandbox> make_sandbox();
+std::unique_ptr<JudgeSandbox> make_sandbox_for(const std::string& language);
 
 // 去尾空白后精确比对。相等返回 1。
 int judge_outputs_match(const std::string& expected, const std::string& actual);

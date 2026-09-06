@@ -22,10 +22,11 @@ std::int64_t create_submission(std::int64_t user_id,
                                nloj::common::AppError* err) {
     // 校验题目存在且可见 → INSERT PENDING → 发判题消息 → 返回 submission_id
 
-    // 基本校验（language 先只放行 Phase B 的 CPP；代码超限按参数错误拒绝）
+    // 基本校验（语言放行 CPP/C/PYTHON/JAVA；代码超限按参数错误拒绝）
     if (user_id <= 0 || problem_id <= 0 || code.empty()
      || code.size() > kMaxCodeBytes
-     || language != "CPP") {
+     || (language != "CPP" && language != "C"
+      && language != "PYTHON" && language != "JAVA")) {
         nloj::common::set_error(err, nloj::common::AppError::InvalidArgument);
         return -1;  // 代码超限也算参数错误
     }

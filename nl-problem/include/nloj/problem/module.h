@@ -1,5 +1,7 @@
 #pragma once
 
+#include "nloj/common/error.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -17,6 +19,8 @@ struct ProblemSummary {
     int memory_limit;         // KB
     int visible;              // 1 可见 0 隐藏
     std::string create_time;  // 创建时间
+    std::string problem_type; // STANDARD | INTERACTIVE | COMMUNICATION
+    std::string judge_mode;   // EXACT | SPJ
 };
 
 // 样例用例，对应详情里 samples[]（仅 is_sample=1）。
@@ -36,6 +40,8 @@ struct ProblemDetail {
     int memory_limit;
     int visible;
     std::string create_time;
+    std::string problem_type; // STANDARD | INTERACTIVE | COMMUNICATION
+    std::string judge_mode;   // EXACT | SPJ
     std::vector<ProblemSample> samples;
 };
 
@@ -55,6 +61,19 @@ struct CreateProblemRequest {
     int time_limit;
     int memory_limit;
     int visible;  // 0/1
+    std::string problem_type = "STANDARD";  // STANDARD | INTERACTIVE | COMMUNICATION
+    std::string judge_mode = "EXACT";       // EXACT | SPJ
+    std::string extra_code;                 // checker / 交互器 / 管理器；不对用户展示
+};
+
+// 判题机用的题目配置（含 extra_code；不看 visible）。
+struct ProblemJudgeConfig {
+    std::int64_t id;
+    int time_limit;
+    int memory_limit;
+    std::string problem_type;
+    std::string judge_mode;
+    std::string extra_code;
 };
 
 // 题目分页列表。difficulty / keyword 空表示不限。
@@ -82,11 +101,17 @@ ProblemCacheStats problem_cache_stats();
 ProblemDetail get_problem(std::int64_t id, int skip_cache = 0);
 
 // 创建题目。对应 POST /api/v1/problems（api 层保证 admin）。
-// 成功返回新 id；失败返回 -1。
-std::int64_t create_problem(const CreateProblemRequest& req);
+// 成功返回新 id；失败返回 -1，并通过 err 给出原因。
+std::int64_t create_problem(const CreateProblemRequest& req,
+                            nloj::common::AppError* err = nullptr);
 
 // 更新题目。对应 PUT /api/v1/problems/{id}。
-// 成功返回 1；失败返回 0。
-int update_problem(std::int64_t id, const CreateProblemRequest& req);
+// 成功返回 1；失败返回 0，并通过 err 给出原因。
+int update_problem(std::int64_t id,
+                   const CreateProblemRequest& req,
+                   nloj::common::AppError* err = nullptr);
+
+// 判题读时限 / 题型 / SPJ 源码。成功 id>0；失败 id==0。
+ProblemJudgeConfig get_problem_judge_config(std::int64_t id);
 
 }  // namespace nloj::problem

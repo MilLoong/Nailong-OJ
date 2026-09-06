@@ -1,5 +1,6 @@
 #include "nloj/judge/module.h"
 #include "nloj/judge/sandbox.h"
+#include "nloj/problem/module.h"
 #include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 
@@ -63,22 +64,14 @@ int run_judge_task(std::int64_t submission_id) {
         return 0;
     }
 
-    // 读题目时限（判题不看 visible，已提交的隐藏题也要评）
-    const std::string problem_sql = "SELECT time_limit, memory_limit FROM problem WHERE id="
-                                   + std::to_string(problem_id)
-                                   + " AND deleted=0 LIMIT 1";
-    MYSQL_RES* problem_result = nloj::common::query_select(conn.get(), problem_sql);
-    if (problem_result == nullptr) {
-        return 0;
-    }
-    MYSQL_ROW problem_row = mysql_fetch_row(problem_result);
-    if (problem_row == nullptr || problem_row[0] == nullptr || problem_row[1] == nullptr) {
-        mysql_free_result(problem_result);
+    // 读题目时限 / 题型 / SPJ（判题不看 visible，已提交的隐藏题也要评）
+    const nloj::problem::ProblemJudgeConfig cfg =
+        nloj::problem::get_problem_judge_config(problem_id);
+    if (cfg.id <= 0) {
         return 0;  // 题目不存在或已删
     }
-    const int time_limit = std::stoi(problem_row[0]);
-    const int memory_limit = std::stoi(problem_row[1]);
-    mysql_free_result(problem_result);
+    const int time_limit = cfg.time_limit;
+    const int memory_limit = cfg.memory_limit;
 
     // 读全部用例（含隐藏点，不要只查 is_sample=1）
     const std::string case_sql = "SELECT id, input, output FROM problem_case WHERE problem_id="
@@ -138,14 +131,18 @@ int run_judge_task(std::int64_t submission_id) {
     };
 
     // 沙箱单容器跑完全部用例：容器内逐用例计时，wait4 记录真实内存峰值
-    std::unique_ptr<JudgeSandbox> box = make_sandbox();
+    std::unique_ptr<JudgeSandbox> box = make_sandbox_for(language);
     SandboxJudgeRequest req;
     req.language = language;
     req.code = code;
     req.time_limit_ms = time_limit;
     req.memory_limit_kb = memory_limit;
+    req.problem_type = cfg.problem_type.empty() ? "STANDARD" : cfg.problem_type;
+    req.judge_mode = cfg.judge_mode.empty() ? "EXACT" : cfg.judge_mode;
+    req.extra_code = cfg.extra_code;
     for (const auto& item : cases) {
         req.inputs.push_back(item.input);
+        req.expecteds.push_back(item.output);
     }
     const SandboxJudgeResult result = box -> judge(req);
     if (result.status == "CE") {
@@ -180,7 +177,9 @@ int run_judge_task(std::int64_t submission_id) {
         if (one.memory_used_kb > max_mem) {
             max_mem = one.memory_used_kb;
         }
-        if (!judge_outputs_match(cases[static_cast<std::size_t>(one.index - 1)].output, one.stdout_text)) {
+        // STANDARD+EXACT 宿主侧比对；SPJ / 交互 / 通信由沙箱或 checker 给出 WA
+        if (req.problem_type == "STANDARD" && req.judge_mode == "EXACT"
+         && !judge_outputs_match(cases[static_cast<std::size_t>(one.index - 1)].output, one.stdout_text)) {
             const std::string info = "WA on test case " + std::to_string(one.index);
             const int ok = write_verdict("WA", one.time_used_ms, one.memory_used_kb, info);
             return ok;

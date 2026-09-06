@@ -81,6 +81,11 @@ void test_problem_crud_flow() {
     const nloj::problem::ProblemDetail detail = nloj::problem::get_problem(id);
     expect_true("get_problem id match", detail.id == id);
     expect_true("get_problem title match", detail.title == req.title);
+    expect_true("default problem_type STANDARD", detail.problem_type == "STANDARD");
+    expect_true("default judge_mode EXACT", detail.judge_mode == "EXACT");
+    nloj::problem::CreateProblemRequest spj_bad = req;
+    spj_bad.judge_mode = "SPJ";
+    expect_true("SPJ without extra_code rejected", nloj::problem::create_problem(spj_bad) < 0);
     expect_true("get_problem has sample", !detail.samples.empty());
     if (!detail.samples.empty()) {
         expect_true("sample input match", detail.samples[0].input == "1 2");

@@ -86,7 +86,7 @@ POST /api/v1/auth/register
 
 | 字段 | 类型 | 必填 | 约束 |
 |------|------|------|------|
-| username | string | 是 | 3-32 字符，唯一 |
+| username | string | 是 | 3-32 字符，字母数字下划线，唯一 |
 | password | string | 是 | 6-64 字符 |
 
 **成功响应**
@@ -105,7 +105,7 @@ POST /api/v1/auth/register
 
 ```json
 {
-  "code": 50001,
+  "code": 40000,
   "message": "用户名已存在",
   "data": null
 }
@@ -140,6 +140,16 @@ POST /api/v1/auth/login
     "username": "alice",
     "role": "user"
   }
+}
+```
+
+**错误示例**（账号不存在或密码错误，避免枚举用户）
+
+```json
+{
+  "code": 40100,
+  "message": "用户名或密码错误",
+  "data": null
 }
 ```
 
@@ -272,9 +282,20 @@ POST /api/v1/problems
   "description": "题面 Markdown...",
   "timeLimit": 1000,
   "memoryLimit": 262144,
-  "visible": 1
+  "visible": 1,
+  "problemType": "STANDARD",
+  "judgeMode": "EXACT",
+  "extraCode": ""
 }
 ```
+
+| 字段 | 说明 |
+|------|------|
+| problemType | 可选，默认 `STANDARD`。`INTERACTIVE` / `COMMUNICATION` 必须带 `extraCode`（交互器 / 管理器，C++） |
+| judgeMode | 可选，默认 `EXACT`。`SPJ` 必须带 `extraCode`（checker：`./checker in.txt user_out.txt ans.txt`，退出 0=AC） |
+| extraCode | 不对用户展示；详情接口不返回 |
+
+交互 / 通信的用户程序只接受 `CPP` / `C`。通信题一份 `code` 用 `===NLOJ_FILE:alice===` / `===NLOJ_FILE:bob===` 拆两段。
 
 **成功响应**
 
@@ -335,10 +356,10 @@ POST /api/v1/submissions
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | problemId | long | 是 | 题目 ID |
-| language | string | 是 | CPP / JAVA / PYTHON / GO |
+| language | string | 是 | CPP / C / PYTHON / JAVA |
 | code | string | 是 | 源代码 |
 
-Phase B 沙箱优先支持 **CPP**。
+Java 必须 `public class Main`。Python 跑 `python3 main.py`。
 
 **成功响应**
 

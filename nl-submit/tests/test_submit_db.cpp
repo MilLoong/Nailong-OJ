@@ -96,8 +96,8 @@ void test_submit_flow() {
     const std::string code = "int main() { return 0; }";
     expect_true("create rejects empty code",
                 nloj::submit::create_submission(user_a, visible_id, "CPP", "") < 0);
-    expect_true("create rejects non-CPP",
-                nloj::submit::create_submission(user_a, visible_id, "JAVA", code) < 0);
+    expect_true("create rejects GO",
+                nloj::submit::create_submission(user_a, visible_id, "GO", code) < 0);
     expect_true("create rejects hidden problem",
                 nloj::submit::create_submission(user_a, hidden_id, "CPP", code) < 0);
 
@@ -109,6 +109,8 @@ void test_submit_flow() {
     expect_true("mq submission_id match", task.submission_id == sid);
     expect_true("mq problem_id match", task.problem_id == visible_id);
     expect_true("mq language CPP", task.language == "CPP");
+    expect_true("create accepts JAVA",
+                nloj::submit::create_submission(user_a, visible_id, "JAVA", code) > 0);
 
     const nloj::submit::SubmissionDetail own =
         nloj::submit::get_submission(sid, user_a, "user");

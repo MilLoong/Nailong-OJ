@@ -145,7 +145,18 @@
 
 追问1：为什么编译和运行不并成一个容器？——编译要放开内存下限（给 g++ 至少 512MB，防止误杀编译），运行要严格按题面 limit 判 MLE，两种限制不能在同一 cgroup 里共存，所以拆两个容器。
 追问2：超时怎么判？——runner 自己掐表（steady_clock），到点主动 `SIGKILL` 记为 TLE；外部 SIGKILL（容器 OOM）才是 MLE。这样 TLE/MLE 不会混。
-追问3：WA 为什么不在容器里判？——输出归一化（去 `\r`、行尾空白、末尾空行）只有一份实现（`judge_outputs_match`），放在宿主侧避免 runner 与宿主两套规则漂移。
+追问3：WA 为什么不在容器里判？——`EXACT` 的输出归一化（去 `\r`、行尾空白、末尾空行）只有一份实现（`judge_outputs_match`），放在宿主侧避免 runner 与宿主两套规则漂移。`SPJ` / 交互 / 通信的 WA 由 checker / 交互器 / 管理器退出码给出，不再走这份精确比对。
+
+### Q12b：除了普通题，交互题、通信题、SPJ 怎么判？
+
+**项目现状**：`problem_type` = STANDARD / INTERACTIVE / COMMUNICATION；`judge_mode` = EXACT / SPJ。`extra_code` 只给判题机，不进公开详情（防泄漏 checker）。
+
+**答**：
+- **SPJ（构造题）**：用户程序照常跑，再用出题人 C++ checker：`./checker in.txt user_out.txt ans.txt`，退出 0=AC。checker 是信任侧代码。
+- **交互题**：runner 用管道接用户程序和交互器；交互器读 `in_k.txt`，stdin/stdout 对用户；退出 0=AC。
+- **通信题**：用户代码用 `===NLOJ_FILE:alice===` / `bob` 拆两段，管理器走四个 FIFO。交互/通信的用户程序目前只接 CPP/C（单一可执行文件）。
+
+短板：Windows 本机降级跑不了交互/通信（要 Docker 或 Linux runner）；`gcc:13-bookworm` 里没有 Python/Java，这两种语言要么自建 `nloj-judge:bookworm`，要么本机解释器（无隔离）。
 
 ### Q13（迭代）：判题结果里的 time_used / memory_used 现在可信吗？
 
@@ -209,9 +220,10 @@
 
 1. **限流**：令牌桶保护提交接口
 2. **WebSocket**：判题结果推送，减少轮询
-3. **Special Judge**：输出多解题目
+3. **Special Judge / 交互 / 通信**：`judge_mode=SPJ` 用出题人 checker；交互器与用户程序管道通信；通信题 Alice/Bob + 管理器
 4. **压测**：`nloj_api_bench` 对 `GET /problems/{id}` 压测，输出 QPS / P99 / 缓存命中率（见 `docs/bench-report.md`）
 5. **CI**：GitHub Actions 编译 + 单元测试
+6. **多语言**：C / C++ / Python / Java；Java 要求 `public class Main`
 
 ---
 
@@ -222,7 +234,7 @@ NLOJ 在线判题后端 | C++20 / CMake / MySQL / Redis / RabbitMQ / Docker
 - NLOJ 项目采用 CMake 多模块（nl-common ~ nl-api），REST + OpenAPI 文档
 - 提交与判题解耦：RabbitMQ 异步消费，Docker 沙箱隔离运行不可信代码
 - Redis 缓存题目详情，更新时主动失效；submission 表复合索引优化分页查询
-- 支持 C++ 判题，策略模式封装输出比对，预留 SPJ 扩展
+- 支持 C/C++/Python/Java；普通题精确比对，构造题 SPJ，另有交互题 / 通信题
 ```
 
 ---

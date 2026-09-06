@@ -178,8 +178,10 @@ public:
 };
 ```
 
-- `ExactMatchJudgeStrategy`：去尾空白后精确比对（默认）
-- （扩展）`SpecialJudgeStrategy`：SPJ 程序比对
+- `EXACT`：宿主侧 `judge_outputs_match`（去 `\r`、行尾空白、末尾空行）
+- `SPJ`：出题人 checker（信任侧）对 `in / user_out / ans` 判多解
+- `INTERACTIVE`：交互器与用户程序管道通信，退出码判 AC/WA
+- `COMMUNICATION`：Alice / Bob + 管理器，管理器退出码判 AC/WA
 
 ---
 

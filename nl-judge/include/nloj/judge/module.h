@@ -11,7 +11,8 @@ const char* module_name();
 // 成功写回结果返回 1；失败返回 0。
 int run_judge_task(std::int64_t submission_id);
 
-// 把超时仍停在 JUDGING 的提交改回 PENDING 并重新入队。
+// 把超时仍停在 JUDGING 的提交改回 PENDING 并重新入队；
+// 同样超时的 PENDING 也会再投一次（embed worker 关掉且 MQ 故障时自愈）。
 // older_than_sec 秒内的不动。返回回收条数。
 int reclaim_stale_judging(int older_than_sec);
 

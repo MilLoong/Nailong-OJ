@@ -85,6 +85,8 @@ std::string encode_problem(const ProblemDetail& p) {
     j["memoryLimit"] = p.memory_limit;
     j["visible"] = p.visible;
     j["createTime"] = p.create_time;
+    j["problemType"] = p.problem_type.empty() ? "STANDARD" : p.problem_type;
+    j["judgeMode"] = p.judge_mode.empty() ? "EXACT" : p.judge_mode;
     nlohmann::json samples = nlohmann::json::array();
     for (const auto& s : p.samples) {
         nlohmann::json one;
@@ -111,6 +113,8 @@ int decode_problem(const std::string& raw, ProblemDetail& out) {
     p.memory_limit = j.value("memoryLimit", 0);
     p.visible = j.value("visible", 0);
     p.create_time = j.value("createTime", "");
+    p.problem_type = j.value("problemType", "STANDARD");
+    p.judge_mode = j.value("judgeMode", "EXACT");
     if (j.contains("samples") && j["samples"].is_array()) {
         for (const auto& one : j["samples"]) {
             ProblemSample s;
@@ -140,6 +144,84 @@ void invalidate_problem_cache(std::int64_t id) {
     nloj::common::redis_del(problem_key(id));
 }
 
+int column_exists(MYSQL* mysql, const char* table, const char* column) {
+    const std::string sql = "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                            "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='"
+                           + std::string(table)
+                           + "' AND COLUMN_NAME='"
+                           + std::string(column) + "'";
+    MYSQL_RES* result = nloj::common::query_select(mysql, sql);
+    if (result == nullptr) {
+        return 0;
+    }
+    MYSQL_ROW row = mysql_fetch_row(result);
+    const int ok = (row != nullptr && row[0] != nullptr && std::stoll(row[0]) > 0) ? 1 : 0;
+    mysql_free_result(result);
+    return ok;
+}
+
+void ensure_problem_schema(MYSQL* mysql) {
+    // 已有库补题型 / SPJ 列；新库 schema.sql 已带这些列
+    if (mysql == nullptr) {
+        return;
+    }
+    if (!column_exists(mysql, "problem", "problem_type")) {
+        nloj::common::query_exec(
+            mysql,
+            "ALTER TABLE problem ADD COLUMN problem_type VARCHAR(16) NOT NULL DEFAULT 'STANDARD'"
+        );
+    }
+    if (!column_exists(mysql, "problem", "judge_mode")) {
+        nloj::common::query_exec(
+            mysql,
+            "ALTER TABLE problem ADD COLUMN judge_mode VARCHAR(16) NOT NULL DEFAULT 'EXACT'"
+        );
+    }
+    if (!column_exists(mysql, "problem", "extra_code")) {
+        nloj::common::query_exec(
+            mysql,
+            "ALTER TABLE problem ADD COLUMN extra_code MEDIUMTEXT NULL"
+        );
+    }
+}
+
+int valid_problem_type(const std::string& type) {
+    return type == "STANDARD" || type == "INTERACTIVE" || type == "COMMUNICATION" ? 1 : 0;
+}
+
+int valid_judge_mode(const std::string& mode) {
+    return mode == "EXACT" || mode == "SPJ" ? 1 : 0;
+}
+
+int extra_code_required(const std::string& type, const std::string& mode) {
+    if (type == "INTERACTIVE" || type == "COMMUNICATION") {
+        return 1;
+    }
+    if (mode == "SPJ") {
+        return 1;
+    }
+    return 0;
+}
+
+int normalize_judge_fields(CreateProblemRequest& req) {
+    if (req.problem_type.empty()) {
+        req.problem_type = "STANDARD";
+    }
+    if (req.judge_mode.empty()) {
+        req.judge_mode = "EXACT";
+    }
+    if (!valid_problem_type(req.problem_type) || !valid_judge_mode(req.judge_mode)) {
+        return 0;
+    }
+    if (extra_code_required(req.problem_type, req.judge_mode) && req.extra_code.empty()) {
+        return 0;
+    }
+    if (req.extra_code.size() > 64 * 1024) {
+        return 0;
+    }
+    return 1;
+}
+
 }  // namespace
 
 const char* module_name() {
@@ -167,34 +249,33 @@ ProblemPage list_problems(std::int64_t page_num,
     }
 
     // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return {};
     }
+    ensure_problem_schema(conn.get());
 
     // 拼过滤条件（列表只看未删且可见；difficulty / keyword 可选）
     std::string where_sql = " WHERE deleted=0 AND visible=1";
     if (!difficulty.empty()) {
-        const std::string escaped_difficulty = nloj::common::escape_sql(&mysql, difficulty);
+        const std::string escaped_difficulty = nloj::common::escape_sql(conn.get(), difficulty);
         where_sql += " AND difficulty='" + escaped_difficulty + "'";
     }
     if (!keyword.empty()) {
-        const std::string escaped_keyword = nloj::common::escape_sql(&mysql, keyword);
+        const std::string escaped_keyword = nloj::common::escape_sql(conn.get(), keyword);
         where_sql += " AND title LIKE '%" + escaped_keyword + "%'";
     }
 
     // COUNT total
     const std::string count_sql = "SELECT COUNT(*) FROM problem"
                                  + where_sql;
-    MYSQL_RES* count_result = nloj::common::query_select(&mysql, count_sql);
+    MYSQL_RES* count_result = nloj::common::query_select(conn.get(), count_sql);
     if (count_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
     MYSQL_ROW count_row = mysql_fetch_row(count_result);
     if (count_row == nullptr || count_row[0] == nullptr) {
         mysql_free_result(count_result);
-        mysql_close(&mysql);
         return {};
     }
     const std::int64_t total = std::stoll(count_row[0]);
@@ -202,15 +283,15 @@ ProblemPage list_problems(std::int64_t page_num,
 
     // SELECT 分页列表（不含 description 题面）
     const std::int64_t offset = (page_num - 1) * page_size;
-    const std::string list_sql = "SELECT id, title, difficulty, time_limit, memory_limit, visible, create_time FROM problem"
+    const std::string list_sql = "SELECT id, title, difficulty, time_limit, memory_limit, visible, "
+                                "create_time, problem_type, judge_mode FROM problem"
                                 + where_sql
                                 + " ORDER BY id DESC LIMIT "
                                 + std::to_string(page_size)
                                 + " OFFSET "
                                 + std::to_string(offset);
-    MYSQL_RES* list_result = nloj::common::query_select(&mysql, list_sql);
+    MYSQL_RES* list_result = nloj::common::query_select(conn.get(), list_sql);
     if (list_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
 
@@ -231,10 +312,11 @@ ProblemPage list_problems(std::int64_t page_num,
         item.memory_limit = row[4] != nullptr ? std::stoi(row[4]) : 0;
         item.visible = row[5] != nullptr ? std::stoi(row[5]) : 0;
         item.create_time = row[6] != nullptr ? row[6] : "";
+        item.problem_type = row[7] != nullptr ? row[7] : "STANDARD";
+        item.judge_mode = row[8] != nullptr ? row[8] : "EXACT";
         page.records.push_back(item);
     }
     mysql_free_result(list_result);
-    mysql_close(&mysql);
     return page;
 }
 
@@ -243,30 +325,30 @@ ProblemDetail load_problem_from_db(std::int64_t id) {
     // 按 id 查题目 → 查 is_sample=1 的用例 → 填 ProblemDetail
 
     // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
         return {};
     }
+    ensure_problem_schema(conn.get());
 
     // 按 id 查题目（未删除且可见）
     const std::string select_sql = "SELECT id, title, difficulty, description, "
-                                   "time_limit, memory_limit, visible, create_time "
+                                   "time_limit, memory_limit, visible, create_time, "
+                                   "problem_type, judge_mode "
                                    "FROM problem WHERE deleted=0 AND visible=1 AND id="
                                   + std::to_string(id)
                                   + " LIMIT 1";
-    MYSQL_RES* problem_result = nloj::common::query_select(&mysql, select_sql);
+    MYSQL_RES* problem_result = nloj::common::query_select(conn.get(), select_sql);
     if (problem_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
     MYSQL_ROW row = mysql_fetch_row(problem_result);
     if (row == nullptr || row[0] == nullptr) {
         mysql_free_result(problem_result);
-        mysql_close(&mysql);
         return {};  // 不存在或不可见
     }
 
-    // row[0]=id … row[7]=create_time
+    // row[0]=id … row[7]=create_time，row[8]/[9] 题型与比对
     ProblemDetail problem;
     problem.id = std::stoll(row[0]);
     problem.title = row[1] != nullptr ? row[1] : "";
@@ -276,15 +358,16 @@ ProblemDetail load_problem_from_db(std::int64_t id) {
     problem.memory_limit = row[5] != nullptr ? std::stoi(row[5]) : 0;
     problem.visible = row[6] != nullptr ? std::stoi(row[6]) : 0;
     problem.create_time = row[7] != nullptr ? row[7] : "";
+    problem.problem_type = row[8] != nullptr ? row[8] : "STANDARD";
+    problem.judge_mode = row[9] != nullptr ? row[9] : "EXACT";
     mysql_free_result(problem_result);
 
     // 查样例用例（仅 is_sample=1，隐藏用例不给前端）
     const std::string case_sql = "SELECT id, input, output FROM problem_case WHERE problem_id="
                                 + std::to_string(id)
                                 + " AND is_sample=1 AND deleted=0 ORDER BY sort_order ASC, id ASC";
-    MYSQL_RES* case_result = nloj::common::query_select(&mysql, case_sql);
+    MYSQL_RES* case_result = nloj::common::query_select(conn.get(), case_sql);
     if (case_result == nullptr) {
-        mysql_close(&mysql);
         return {};
     }
     while (MYSQL_ROW case_row = mysql_fetch_row(case_result)) {
@@ -298,7 +381,6 @@ ProblemDetail load_problem_from_db(std::int64_t id) {
         problem.samples.push_back(sample);
     }
     mysql_free_result(case_result);
-    mysql_close(&mysql);
     return problem;
 }
 
@@ -365,67 +447,83 @@ ProblemDetail get_problem(std::int64_t id, int skip_cache) {
     return load_problem_from_db(id);
 }
 
-std::int64_t create_problem(const CreateProblemRequest& req) {
+std::int64_t create_problem(const CreateProblemRequest& req, nloj::common::AppError* err) {
     // 校验字段 → INSERT problem → 返回 insert_id
 
-    // 校验字段
-    if (req.title.empty() || req.title.size() > 256 || req.description.empty()
-     || (req.difficulty != "EASY" && req.difficulty != "MEDIUM" && req.difficulty != "HARD")
-     || req.time_limit <= 0 || req.memory_limit <= 0
-     || (req.visible != 0 && req.visible != 1)) {
+    CreateProblemRequest norm = req;
+    if (norm.title.empty() || norm.title.size() > 256 || norm.description.empty()
+     || (norm.difficulty != "EASY" && norm.difficulty != "MEDIUM" && norm.difficulty != "HARD")
+     || norm.time_limit <= 0 || norm.memory_limit <= 0
+     || (norm.visible != 0 && norm.visible != 1)
+     || !normalize_judge_fields(norm)) {
+        nloj::common::set_error(err, nloj::common::AppError::InvalidArgument);
         return -1;
     }
 
-    // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return -1;
     }
+    ensure_problem_schema(conn.get());
 
     // INSERT problem（用例可后续再插 problem_case）
-    const std::string escaped_title = nloj::common::escape_sql(&mysql, req.title);
-    const std::string escaped_difficulty = nloj::common::escape_sql(&mysql, req.difficulty);
-    const std::string escaped_description = nloj::common::escape_sql(&mysql, req.description);
+    const std::string escaped_title = nloj::common::escape_sql(conn.get(), norm.title);
+    const std::string escaped_difficulty = nloj::common::escape_sql(conn.get(), norm.difficulty);
+    const std::string escaped_description = nloj::common::escape_sql(conn.get(), norm.description);
+    const std::string escaped_type = nloj::common::escape_sql(conn.get(), norm.problem_type);
+    const std::string escaped_mode = nloj::common::escape_sql(conn.get(), norm.judge_mode);
+    const std::string escaped_extra = nloj::common::escape_sql(conn.get(), norm.extra_code);
     const std::string insert_sql = "INSERT INTO problem (title, difficulty, description, "
-                                   "time_limit, memory_limit, visible) VALUES ('"
+                                   "time_limit, memory_limit, visible, problem_type, judge_mode, extra_code) VALUES ('"
                                   + escaped_title + "', '"
                                   + escaped_difficulty + "', '"
                                   + escaped_description + "', "
-                                  + std::to_string(req.time_limit) + ", "
-                                  + std::to_string(req.memory_limit) + ", "
-                                  + std::to_string(req.visible) + ")";
-    if (!nloj::common::query_exec(&mysql, insert_sql)) {
-        mysql_close(&mysql);
+                                  + std::to_string(norm.time_limit) + ", "
+                                  + std::to_string(norm.memory_limit) + ", "
+                                  + std::to_string(norm.visible) + ", '"
+                                  + escaped_type + "', '"
+                                  + escaped_mode + "', '"
+                                  + escaped_extra + "')";
+    if (!nloj::common::query_exec(conn.get(), insert_sql)) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return -1;
     }
 
-    const std::int64_t problem_id = static_cast<std::int64_t>(mysql_insert_id(&mysql));
-    mysql_close(&mysql);
+    const std::int64_t problem_id = static_cast<std::int64_t>(mysql_insert_id(conn.get()));
+    nloj::common::set_error(err, nloj::common::AppError::Ok);
     return problem_id;
 }
 
-int update_problem(std::int64_t id, const CreateProblemRequest& req) {
+int update_problem(std::int64_t id, const CreateProblemRequest& req, nloj::common::AppError* err) {
     // 校验字段 → 按 id UPDATE → 返回是否影响到行
 
     // 校验字段
+    CreateProblemRequest norm = req;
     if (id <= 0
-     || req.title.empty() || req.title.size() > 256 || req.description.empty()
-     || (req.difficulty != "EASY" && req.difficulty != "MEDIUM" && req.difficulty != "HARD")
-     || req.time_limit <= 0 || req.memory_limit <= 0
-     || (req.visible != 0 && req.visible != 1)) {
+     || norm.title.empty() || norm.title.size() > 256 || norm.description.empty()
+     || (norm.difficulty != "EASY" && norm.difficulty != "MEDIUM" && norm.difficulty != "HARD")
+     || norm.time_limit <= 0 || norm.memory_limit <= 0
+     || (norm.visible != 0 && norm.visible != 1)
+     || !normalize_judge_fields(norm)) {
+        nloj::common::set_error(err, nloj::common::AppError::InvalidArgument);
         return 0;
     }
 
-    // mysql 初始化、连接
-    MYSQL mysql;
-    if (!nloj::common::start_mysql(mysql)) {
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return 0;
     }
+    ensure_problem_schema(conn.get());
 
     // 按 id UPDATE
-    const std::string escaped_title = nloj::common::escape_sql(&mysql, req.title);
-    const std::string escaped_difficulty = nloj::common::escape_sql(&mysql, req.difficulty);
-    const std::string escaped_description = nloj::common::escape_sql(&mysql, req.description);
+    const std::string escaped_title = nloj::common::escape_sql(conn.get(), norm.title);
+    const std::string escaped_difficulty = nloj::common::escape_sql(conn.get(), norm.difficulty);
+    const std::string escaped_description = nloj::common::escape_sql(conn.get(), norm.description);
+    const std::string escaped_type = nloj::common::escape_sql(conn.get(), norm.problem_type);
+    const std::string escaped_mode = nloj::common::escape_sql(conn.get(), norm.judge_mode);
+    const std::string escaped_extra = nloj::common::escape_sql(conn.get(), norm.extra_code);
     const std::string update_sql = "UPDATE problem SET title='"
                                   + escaped_title
                                   + "', difficulty='"
@@ -433,25 +531,69 @@ int update_problem(std::int64_t id, const CreateProblemRequest& req) {
                                   + "', description='"
                                   + escaped_description
                                   + "', time_limit="
-                                  + std::to_string(req.time_limit)
+                                  + std::to_string(norm.time_limit)
                                   + ", memory_limit="
-                                  + std::to_string(req.memory_limit)
+                                  + std::to_string(norm.memory_limit)
                                   + ", visible="
-                                  + std::to_string(req.visible)
-                                  + " WHERE id="
+                                  + std::to_string(norm.visible)
+                                  + ", problem_type='"
+                                  + escaped_type
+                                  + "', judge_mode='"
+                                  + escaped_mode
+                                  + "', extra_code='"
+                                  + escaped_extra
+                                  + "' WHERE id="
                                   + std::to_string(id)
                                   + " AND deleted=0";
-    if (!nloj::common::query_exec(&mysql, update_sql)) {
-        mysql_close(&mysql);
+    if (!nloj::common::query_exec(conn.get(), update_sql)) {
+        nloj::common::set_error(err, nloj::common::AppError::Database);
         return 0;
     }
 
-    const int ok = mysql_affected_rows(&mysql) > 0 ? 1 : 0;  // 0 行：id 不存在或已删
-    mysql_close(&mysql);
+    const int ok = mysql_affected_rows(conn.get()) > 0 ? 1 : 0;  // 0 行：id 不存在或已删
+    if (!ok) {
+        nloj::common::set_error(err, nloj::common::AppError::NotFound);
+    } else {
+        nloj::common::set_error(err, nloj::common::AppError::Ok);
+    }
     if (ok) {
         invalidate_problem_cache(id);
     }
     return ok;
+}
+
+ProblemJudgeConfig get_problem_judge_config(std::int64_t id) {
+    // 判题读配置（不看 visible；含 extra_code）
+    if (id <= 0) {
+        return {};
+    }
+    nloj::common::MysqlConn conn;
+    if (!conn.ok()) {
+        return {};
+    }
+    ensure_problem_schema(conn.get());
+    const std::string select_sql = "SELECT id, time_limit, memory_limit, problem_type, "
+                                   "judge_mode, extra_code FROM problem WHERE id="
+                                  + std::to_string(id)
+                                  + " AND deleted=0 LIMIT 1";
+    MYSQL_RES* result = nloj::common::query_select(conn.get(), select_sql);
+    if (result == nullptr) {
+        return {};
+    }
+    MYSQL_ROW row = mysql_fetch_row(result);
+    if (row == nullptr || row[0] == nullptr) {
+        mysql_free_result(result);
+        return {};
+    }
+    ProblemJudgeConfig cfg;
+    cfg.id = std::stoll(row[0]);
+    cfg.time_limit = row[1] != nullptr ? std::stoi(row[1]) : 0;
+    cfg.memory_limit = row[2] != nullptr ? std::stoi(row[2]) : 0;
+    cfg.problem_type = row[3] != nullptr ? row[3] : "STANDARD";
+    cfg.judge_mode = row[4] != nullptr ? row[4] : "EXACT";
+    cfg.extra_code = row[5] != nullptr ? row[5] : "";
+    mysql_free_result(result);
+    return cfg;
 }
 
 }  // namespace nloj::problem

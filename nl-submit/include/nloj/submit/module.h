@@ -1,5 +1,7 @@
 #pragma once
 
+#include "nloj/common/error.h"
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -13,7 +15,7 @@ struct SubmissionDetail {
     std::int64_t id;           // 提交主键
     std::int64_t user_id;      // 提交用户
     std::int64_t problem_id;   // 题目
-    std::string language;      // CPP | JAVA | PYTHON | GO
+    std::string language;      // CPP | C | PYTHON | JAVA
     std::string code;          // 源代码（列表接口可不填）
     std::string status;        // PENDING | JUDGING | AC | ...
     int time_used;             // ms；未出结果可用 -1 表示 null
@@ -32,11 +34,12 @@ struct SubmissionPage {
 
 // 提交代码。对应 POST /api/v1/submissions。
 // user_id 来自 token，不要用客户端乱传的用户 id。
-// 成功返回 submission id；失败返回 -1。
+// 成功返回 submission id；失败返回 -1，并通过 err 给出原因。
 std::int64_t create_submission(std::int64_t user_id,
                                std::int64_t problem_id,
                                const std::string& language,
-                               const std::string& code);
+                               const std::string& code,
+                               nloj::common::AppError* err = nullptr);
 
 // 提交详情。对应 GET /api/v1/submissions/{id}。
 // viewer_* 用于校验本人或 admin；失败返回 id==0。
