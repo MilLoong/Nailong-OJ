@@ -225,8 +225,8 @@ void test_negative(httplib::Client& cli, const std::string& user_token) {
     bad_login["username"] = unique_name("e2e_miss_");
     bad_login["password"] = "wrong-pass";
     const httplib::Result login_miss = post_json(cli, "/api/v1/auth/login", bad_login, "");
-    expect_true("login unknown user 50001",
-                parse_res(login_miss, j) && json_code(j) == 50001);
+    expect_true("login unknown user 40100",
+                parse_res(login_miss, j) && json_code(j) == 40100);
 
     const httplib::Result no_auth = cli.Get("/api/v1/users/me");
     expect_true("me without bearer 40100",
@@ -277,8 +277,15 @@ void test_happy_path(httplib::Client& cli) {
     wrong["username"] = username;
     wrong["password"] = "wrong-pass";
     const httplib::Result bad_pw = post_json(cli, "/api/v1/auth/login", wrong, "");
-    expect_true("wrong password 50001",
-                parse_res(bad_pw, j) && json_code(j) == 50001);
+    expect_true("wrong password 40100",
+                parse_res(bad_pw, j) && json_code(j) == 40100);
+
+    nlohmann::json dup;
+    dup["username"] = username;
+    dup["password"] = kPassword;
+    const httplib::Result taken = post_json(cli, "/api/v1/auth/register", dup, "");
+    expect_true("register taken 40000",
+                parse_res(taken, j) && json_code(j) == 40000);
 
     test_negative(cli, user_token);
 

@@ -41,6 +41,7 @@ constexpr int kSpjTimeoutMs = 10000;
 constexpr const char* kRunnerSource = R"SANDBOX(
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <signal.h>
