@@ -470,8 +470,16 @@ void register_http_routes(httplib::Server& svr) {
         }
         const std::string difficulty = req.has_param("difficulty") ? req.get_param_value("difficulty") : "";
         const std::string keyword = req.has_param("keyword") ? req.get_param_value("keyword") : "";
+        // lastId：keyset 游标分页，传上一页最后一条 id（>0 时忽略 pageNum 深翻页语义）
+        std::int64_t last_id = 0;
+        if (req.has_param("lastId")) {
+            if (!nloj::api::parse_i64(req.get_param_value("lastId"), last_id) || last_id <= 0) {
+                write_body(res, nloj::api::json_err(40000, "请求参数错误"));
+                return;
+            }
+        }
         const nloj::problem::ProblemPage page = nloj::problem::list_problems(
-            page_num, page_size, difficulty, keyword
+            page_num, page_size, difficulty, keyword, last_id
         );
         nlohmann::json records = nlohmann::json::array();
         for (const auto& item : page.records) {
@@ -617,8 +625,16 @@ void register_http_routes(httplib::Server& svr) {
             }
         }
         const std::string status = req.has_param("status") ? req.get_param_value("status") : "";
+        // lastId：keyset 游标分页，传上一页最后一条 id（>0 时忽略 pageNum 深翻页语义）
+        std::int64_t last_id = 0;
+        if (req.has_param("lastId")) {
+            if (!nloj::api::parse_i64(req.get_param_value("lastId"), last_id) || last_id <= 0) {
+                write_body(res, nloj::api::json_err(40000, "请求参数错误"));
+                return;
+            }
+        }
         const nloj::submit::SubmissionPage page = nloj::submit::list_my_submissions(
-            user.id, page_num, page_size, problem_id, status
+            user.id, page_num, page_size, problem_id, status, last_id
         );
         nlohmann::json records = nlohmann::json::array();
         for (const auto& item : page.records) {

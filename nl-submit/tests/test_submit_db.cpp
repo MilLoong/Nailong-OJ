@@ -156,11 +156,49 @@ void test_submit_flow() {
     expect_true("list other user excludes mine", !page_contains(other_list, sid));
 }
 
+// keyset 分页：专属用户造 3 条提交 -> 首页 2 条 -> 游标翻页 -> 无重叠、严格递减、到尾为空。
+void test_submit_keyset_flow() {
+    drain_judge_queue();
+    const std::int64_t user = insert_user(unique_name("ut_ks_u_"));
+    const std::int64_t problem_id = make_problem(1);
+    expect_true("keyset user/problem", user > 0 && problem_id > 0);
+
+    const std::string code = "int main() { return 0; }";
+    std::int64_t sids[3] = {0, 0, 0};
+    for (int i = 0; i < 3; ++i) {
+        sids[i] = nloj::submit::create_submission(user, problem_id, "CPP", code);
+        expect_true("keyset create submission", sids[i] > 0);
+    }
+
+    // 该用户只有这 3 条，按 id DESC：最新创建的排最前
+    const nloj::submit::SubmissionPage first =
+        nloj::submit::list_my_submissions(user, 1, 2, 0, "");
+    expect_true("keyset total 3", first.total == 3);
+    expect_true("keyset first page has 2", first.records.size() == 2);
+    expect_true("keyset first page order",
+                first.records.size() == 2
+                && first.records[0].id == sids[2]
+                && first.records[1].id == sids[1]);
+
+    const std::int64_t cursor = first.records.size() == 2 ? first.records[1].id : 0;
+    const nloj::submit::SubmissionPage second =
+        nloj::submit::list_my_submissions(user, 1, 2, 0, "", cursor);
+    expect_true("keyset second page has 1", second.records.size() == 1);
+    expect_true("keyset cursor returns oldest",
+                second.records.size() == 1 && second.records[0].id == sids[0]);
+
+    const std::int64_t last = second.records.size() == 1 ? second.records[0].id : 0;
+    const nloj::submit::SubmissionPage tail =
+        nloj::submit::list_my_submissions(user, 1, 2, 0, "", last);
+    expect_true("keyset end returns empty", tail.records.empty());
+}
+
 }  // namespace
 
 int main() {
-    // 提交全流程联调 -> 汇总退出码
+    // 提交全流程联调 + keyset 分页 -> 汇总退出码
     test_submit_flow();
+    test_submit_keyset_flow();
     if (g_failed) {
         std::cerr << "nl-submit db tests failed (检查 MySQL 是否启动且 nloj/nloj_db 已就绪)\n";
         return EXIT_FAILURE;

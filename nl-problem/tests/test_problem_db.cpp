@@ -118,11 +118,50 @@ void test_problem_crud_flow() {
     expect_true("update missing id fails", !nloj::problem::update_problem(999999999, req));
 }
 
+// keyset 分页：造 3 道题 -> 第 1 页 2 条 -> 用最小 id 当游标翻页 -> 无重叠、严格递减、到尾为空。
+void test_problem_keyset_flow() {
+    const std::string kw = "ut_ks_" + std::to_string(std::time(nullptr));
+    std::int64_t ids[3] = {0, 0, 0};
+    for (int i = 0; i < 3; ++i) {
+        nloj::problem::CreateProblemRequest req;
+        req.title = kw + "_" + std::to_string(i);
+        req.difficulty = "EASY";
+        req.description = "keyset unit test";
+        req.time_limit = 1000;
+        req.memory_limit = 262144;
+        req.visible = 1;
+        ids[i] = nloj::problem::create_problem(req);
+        expect_true("keyset create problem", ids[i] > 0);
+    }
+
+    const nloj::problem::ProblemPage first =
+        nloj::problem::list_problems(1, 2, "EASY", kw);
+    expect_true("keyset total 3", first.total == 3);
+    expect_true("keyset first page has 2", first.records.size() == 2);
+    expect_true("keyset first page desc",
+                first.records.size() == 2 && first.records[0].id > first.records[1].id);
+
+    const std::int64_t cursor = first.records.size() == 2 ? first.records[1].id : 0;
+    const nloj::problem::ProblemPage second =
+        nloj::problem::list_problems(1, 2, "EASY", kw, cursor);
+    expect_true("keyset second page has 1", second.records.size() == 1);
+    expect_true("keyset cursor no overlap and desc",
+                second.records.size() == 1
+                && second.records[0].id < cursor
+                && second.records[0].id != first.records[0].id);
+
+    const std::int64_t last = second.records.size() == 1 ? second.records[0].id : 0;
+    const nloj::problem::ProblemPage tail =
+        nloj::problem::list_problems(1, 2, "EASY", kw, last);
+    expect_true("keyset end returns empty", tail.records.empty());
+}
+
 }  // namespace
 
 int main() {
-    // 题目 CRUD 联调 -> 汇总退出码
+    // 题目 CRUD 联调 + keyset 分页 -> 汇总退出码
     test_problem_crud_flow();
+    test_problem_keyset_flow();
     if (g_failed) {
         std::cerr << "nl-problem db tests failed (检查 MySQL 是否启动且 nloj/nloj_db 已就绪)\n";
         return EXIT_FAILURE;

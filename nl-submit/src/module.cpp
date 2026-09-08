@@ -142,11 +142,12 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
                                    std::int64_t page_num,
                                    std::int64_t page_size,
                                    std::int64_t problem_id,
-                                   const std::string& status) {
-    // 按 user_id 与可选过滤 COUNT -> SELECT 分页 -> 填 SubmissionPage
+                                   const std::string& status,
+                                   std::int64_t last_id) {
+    // 按 user_id 与可选过滤 COUNT -> 分页 SELECT（last_id>0 走 keyset）-> 填 SubmissionPage
 
     // 校验分页（页码从 1 起，每页最多 100）
-    if (user_id <= 0 || page_num < 1 || page_size < 1 || page_size > 100) {
+    if (user_id <= 0 || page_num < 1 || page_size < 1 || page_size > 100 || last_id < 0) {
         return {};
     }
 
@@ -182,14 +183,24 @@ SubmissionPage list_my_submissions(std::int64_t user_id,
     mysql_free_result(count_result);
 
     // SELECT 分页列表（不含完整 code）
-    const std::int64_t offset = (page_num - 1) * page_size;
+    // last_id>0 用 keyset：只取 id 比游标小的最新 page_size 条，深翻页不再扫描 OFFSET 行
+    std::string list_where = where_sql;
+    std::string list_tail;
+    if (last_id > 0) {
+        list_where += " AND id < " + std::to_string(last_id);
+        list_tail = " ORDER BY id DESC LIMIT "
+                  + std::to_string(page_size);
+    } else {
+        const std::int64_t offset = (page_num - 1) * page_size;
+        list_tail = " ORDER BY id DESC LIMIT "
+                  + std::to_string(page_size)
+                  + " OFFSET "
+                  + std::to_string(offset);
+    }
     const std::string list_sql = "SELECT id, user_id, problem_id, language, status, "
                                  "time_used, memory_used, judge_info, create_time FROM submission"
-                                + where_sql
-                                + " ORDER BY id DESC LIMIT "
-                                + std::to_string(page_size)
-                                + " OFFSET "
-                                + std::to_string(offset);
+                                + list_where
+                                + list_tail;
     MYSQL_RES* list_result = nloj::common::query_select(conn.get(), list_sql);
     if (list_result == nullptr) {
         return {};

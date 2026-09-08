@@ -92,11 +92,15 @@ struct ProblemJudgeConfig {
  * @brief 题目分页列表。对应 GET /api/v1/problems。
  * @param difficulty 空表示不限
  * @param keyword 空表示不限
+ * @param last_id keyset 游标：>0 时返回「id 小于 last_id」的最新一页，每页只扫
+ *                page_size 行、不再随页码变慢（忽略 page_num）；0 时走 OFFSET 分页。
+ *                用法：上一页最后一条记录的 id 作为本页 lastId。
  */
 ProblemPage list_problems(std::int64_t page_num,
                           std::int64_t page_size,
                           const std::string& difficulty,
-                          const std::string& keyword);
+                          const std::string& keyword,
+                          std::int64_t last_id = 0);
 
 /**
  * @brief 进程内缓存计数，给 health / 压测看命中率。

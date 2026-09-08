@@ -60,11 +60,15 @@ SubmissionDetail get_submission(std::int64_t id,
  * @brief 我的提交列表。对应 GET /api/v1/submissions。
  * @param problem_id 0 表示不按题过滤
  * @param status 空表示不限
+ * @param last_id keyset 游标：>0 时返回「id 小于 last_id」的最新一页，每页只扫
+ *                page_size 行、不再随页码变慢（忽略 page_num）；0 时走 OFFSET 分页。
+ *                用法：上一页最后一条记录的 id 作为本页 lastId。
  */
 SubmissionPage list_my_submissions(std::int64_t user_id,
                                    std::int64_t page_num,
                                    std::int64_t page_size,
                                    std::int64_t problem_id,
-                                   const std::string& status);
+                                   const std::string& status,
+                                   std::int64_t last_id = 0);
 
 }  // namespace nloj::submit

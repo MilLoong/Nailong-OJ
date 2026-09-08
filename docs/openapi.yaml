@@ -163,6 +163,7 @@ paths:
           in: query
           schema:
             type: string
+        - $ref: '#/components/parameters/lastId'
       responses:
         '200':
           description: OK
@@ -265,6 +266,7 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/SubmissionStatus'
+        - $ref: '#/components/parameters/lastId'
       responses:
         '200':
           description: OK
@@ -368,6 +370,17 @@ components:
         default: 20
         minimum: 1
         maximum: 100
+    lastId:
+      name: lastId
+      in: query
+      description: >-
+        keyset 游标分页：传上一页最后一条记录的 id；传了则按 id < lastId 取最新
+        page_size 条（每页只扫 page_size 行），忽略 pageNum 的深翻页语义；不带则走
+        OFFSET 分页。用法：第一页不带 lastId，之后每页用上一页最后一条的 id。
+      schema:
+        type: integer
+        format: int64
+        minimum: 1
     problemId:
       name: id
       in: path

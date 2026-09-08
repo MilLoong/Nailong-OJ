@@ -240,11 +240,12 @@ ProblemCacheStats problem_cache_stats() {
 ProblemPage list_problems(std::int64_t page_num,
                           std::int64_t page_size,
                           const std::string& difficulty,
-                          const std::string& keyword) {
-    // 拼过滤条件 -> COUNT total -> SELECT 分页列表（不含题面）-> 填 ProblemPage
+                          const std::string& keyword,
+                          std::int64_t last_id) {
+    // 拼过滤条件 -> COUNT total -> 分页 SELECT（last_id>0 走 keyset）-> 填 ProblemPage
 
     // 校验分页（页码从 1 起，每页最多 100）
-    if (page_num < 1 || page_size < 1 || page_size > 100) {
+    if (page_num < 1 || page_size < 1 || page_size > 100 || last_id < 0) {
         return {};
     }
 
@@ -282,14 +283,24 @@ ProblemPage list_problems(std::int64_t page_num,
     mysql_free_result(count_result);
 
     // SELECT 分页列表（不含 description 题面）
-    const std::int64_t offset = (page_num - 1) * page_size;
+    // last_id>0 用 keyset：只取 id 比游标小的最新 page_size 条，深翻页不再扫描 OFFSET 行
+    std::string list_where = where_sql;
+    std::string list_tail;
+    if (last_id > 0) {
+        list_where += " AND id < " + std::to_string(last_id);
+        list_tail = " ORDER BY id DESC LIMIT "
+                  + std::to_string(page_size);
+    } else {
+        const std::int64_t offset = (page_num - 1) * page_size;
+        list_tail = " ORDER BY id DESC LIMIT "
+                  + std::to_string(page_size)
+                  + " OFFSET "
+                  + std::to_string(offset);
+    }
     const std::string list_sql = "SELECT id, title, difficulty, time_limit, memory_limit, visible, "
                                 "create_time, problem_type, judge_mode FROM problem"
-                                + where_sql
-                                + " ORDER BY id DESC LIMIT "
-                                + std::to_string(page_size)
-                                + " OFFSET "
-                                + std::to_string(offset);
+                                + list_where
+                                + list_tail;
     MYSQL_RES* list_result = nloj::common::query_select(conn.get(), list_sql);
     if (list_result == nullptr) {
         return {};
