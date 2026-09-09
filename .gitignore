@@ -15,6 +15,7 @@ build_log.txt
 
 README.local.md
 docs/*.md
+!docs/api.md
 docs/bench-report.generated.md
 .agents/
 .cursor/
