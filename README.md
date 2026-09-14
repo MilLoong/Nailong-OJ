@@ -30,6 +30,8 @@ mysql -h 127.0.0.1 -u nloj -pnloj123456 nloj_db < sql/schema.sql
 
 复制 `config.example.json` 为 `config.json`，或设置 `NLOJ_CONFIG` / `NLOJ_JWT_SECRET` 等环境变量。
 
+日志（可选）：`NLOJ_LOG_LEVEL`（`debug` / `info` / `warn` / `error`，默认 `info`），`NLOJ_LOG_FILE`（追加写文件；未设则只打 stderr）。API 会对每条请求打访问日志（方法、路径、IP、业务 `code`）。
+
 ### Linux
 
 ```bash
