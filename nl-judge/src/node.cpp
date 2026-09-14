@@ -1,5 +1,6 @@
 #include "nloj/judge/node.h"
 #include "nloj/judge/module.h"
+#include "nloj/common/log.h"
 #include "nloj/common/mq.h"
 #include "nloj/common/redis.h"
 
@@ -14,8 +15,9 @@
 
 #include <chrono>
 #include <cstdint>
-#include <iostream>
 #include <sstream>
+#include <string>
+#include <thread>
 
 namespace nloj::judge {
 namespace {
@@ -129,7 +131,7 @@ void JudgeNode::run() {
 
     stop_.store(0);
     hb_.start();
-    std::cout << "nloj_judge_node " << node_id_ << " running" << std::endl;
+    nloj::common::log_info("nloj_judge_node " + node_id_ + " running");
     auto last_reclaim = std::chrono::steady_clock::now();
 
     while (stop_.load() == 0) {
@@ -137,15 +139,21 @@ void JudgeNode::run() {
         if (now - last_reclaim >= std::chrono::milliseconds(kReclaimEveryMs)) {
             const int n = reclaim_stale_judging(kStaleJudgingSec);
             if (n > 0) {
-                std::cout << "reclaimed " << n << " stale JUDGING" << std::endl;
+                nloj::common::log_warn("reclaimed " + std::to_string(n) + " stale JUDGING");
             }
             last_reclaim = now;
         }
 
         nloj::common::JudgeTaskMessage task;
         if (nloj::common::try_pop_judge_task(task)) {
+            nloj::common::log_info(
+                "judge task begin submissionId=" + std::to_string(task.submission_id)
+            );
             run_judge_task(task.submission_id);
             nloj::common::ack_judge_task(task);
+            nloj::common::log_info(
+                "judge task end submissionId=" + std::to_string(task.submission_id)
+            );
             continue;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(kPopIdleMs));

@@ -1,5 +1,6 @@
 #include "nloj/common/mq.h"
 #include "nloj/common/config.h"
+#include "nloj/common/log.h"
 
 #include <nlohmann/json.hpp>
 
@@ -14,10 +15,10 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <queue>
 #include <thread>
+#include <string>
 
 namespace nloj::common {
 namespace {
@@ -45,11 +46,12 @@ void log_rpc(const char* where, amqp_rpc_reply_t r) {
     if (rpc_ok(r)) {
         return;
     }
-    std::cerr << where;
+    std::string msg = where;
     if (r.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION) {
-        std::cerr << ": " << amqp_error_string2(r.library_error);
+        msg += ": ";
+        msg += amqp_error_string2(r.library_error);
     }
-    std::cerr << std::endl;
+    log_error(msg);
 }
 
 // opened=1 表示 TCP/登录已成功，先关 channel/connection 再销毁。
@@ -231,7 +233,7 @@ void ensure_backend() {
         return;
     }
     g_use_rabbit = 0;
-    std::cout << "RabbitMQ unavailable, fallback to in-process queue" << std::endl;
+    log_warn("RabbitMQ unavailable, fallback to in-process queue");
 }
 
 void fallback_inprocess() {
@@ -310,7 +312,7 @@ int rabbit_publish(const JudgeTaskMessage& msg) {
         0, 0, &props, body
     );
     if (pub != AMQP_STATUS_OK) {
-        std::cerr << "amqp basic.publish: " << amqp_error_string2(pub) << std::endl;
+        log_error(std::string("amqp basic.publish: ") + amqp_error_string2(pub));
         fallback_inprocess();
         return 0;
     }

@@ -81,7 +81,7 @@ if(NOT EXISTS "${NLOJ_JSON_HPP}")
     endif()
 endif()
 
-add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp src/config.cpp src/error.cpp)
+add_library(nl-common src/module.cpp src/mysql.cpp src/mq.cpp src/redis.cpp src/config.cpp src/error.cpp src/log.cpp)
 target_include_directories(nl-common
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -112,6 +112,9 @@ add_test(NAME common_config COMMAND nloj_common_config_test)
 add_executable(nloj_common_error_test tests/test_error.cpp)
 target_link_libraries(nloj_common_error_test PRIVATE nl-common)
 add_test(NAME common_error COMMAND nloj_common_error_test)
+add_executable(nloj_common_log_test tests/test_log.cpp)
+target_link_libraries(nloj_common_log_test PRIVATE nl-common)
+add_test(NAME common_log COMMAND nloj_common_log_test)
 if(WIN32)
     get_filename_component(_nloj_mysql_lib_dir "${NLOJ_MYSQL_LIBRARY}" DIRECTORY)
     set_tests_properties(common_mq PROPERTIES
@@ -121,5 +124,7 @@ if(WIN32)
     set_tests_properties(common_config PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
     set_tests_properties(common_error PROPERTIES
+        ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
+    set_tests_properties(common_log PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
 endif()

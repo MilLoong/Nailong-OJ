@@ -1,9 +1,9 @@
 #include "nloj/common/mysql.h"
 #include "nloj/common/config.h"
+#include "nloj/common/log.h"
 
 #include <cstdint>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <string>
 #include <type_traits>
@@ -13,7 +13,7 @@ namespace nloj::common {
 namespace {
 
 void log_mysql_error(MYSQL* conn) {
-    std::cerr << mysql_error(conn) << std::endl;
+    log_error(std::string("mysql: ") + mysql_error(conn));
 }
 
 int login_mysql(MYSQL* mysql) {
@@ -167,7 +167,7 @@ int query_stmt(MYSQL* conn,
         return 0;
     }
     if (mysql_stmt_prepare(stmt, sql, static_cast<unsigned long>(std::strlen(sql))) != 0) {
-        std::cerr << mysql_stmt_error(stmt) << std::endl;
+        log_error(std::string("mysql_stmt: ") + mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         return 0;
     }
@@ -184,14 +184,14 @@ int query_stmt(MYSQL* conn,
             binds[i].length = &lens[i];
         }
         if (mysql_stmt_bind_param(stmt, binds.data()) != 0) {
-            std::cerr << mysql_stmt_error(stmt) << std::endl;
+            log_error(std::string("mysql_stmt: ") + mysql_stmt_error(stmt));
             mysql_stmt_close(stmt);
             return 0;
         }
     }
 
     if (mysql_stmt_execute(stmt) != 0) {
-        std::cerr << mysql_stmt_error(stmt) << std::endl;
+        log_error(std::string("mysql_stmt: ") + mysql_stmt_error(stmt));
         mysql_stmt_close(stmt);
         return 0;
     }
@@ -233,13 +233,13 @@ int query_stmt(MYSQL* conn,
         out_bind[i].error = &cols_buf[i].error;
     }
     if (mysql_stmt_bind_result(stmt, out_bind.data()) != 0) {
-        std::cerr << mysql_stmt_error(stmt) << std::endl;
+        log_error(std::string("mysql_stmt: ") + mysql_stmt_error(stmt));
         mysql_free_result(meta);
         mysql_stmt_close(stmt);
         return 0;
     }
     if (mysql_stmt_store_result(stmt) != 0) {
-        std::cerr << mysql_stmt_error(stmt) << std::endl;
+        log_error(std::string("mysql_stmt: ") + mysql_stmt_error(stmt));
         mysql_free_result(meta);
         mysql_stmt_close(stmt);
         return 0;

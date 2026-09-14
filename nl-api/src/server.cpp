@@ -2,6 +2,7 @@
 
 #include "http_json.h"
 #include "nloj/common/error.h"
+#include "nloj/common/log.h"
 #include "nloj/common/mq.h"
 #include "nloj/common/mysql.h"
 #include "nloj/common/redis.h"
@@ -324,11 +325,69 @@ nlohmann::json json_submission(const nloj::submit::SubmissionDetail& s, int with
     return j;
 }
 
+// 优先网关传来的 X-Real-IP，否则用直连对端。
+std::string request_client_ip(const httplib::Request& req) {
+    const std::string xri = req.get_header_value("X-Real-IP");
+    if (!xri.empty()) {
+        return xri;
+    }
+    return req.remote_addr;
+}
+
+// 统一 JSON 包里的业务 code；非 JSON 返回 -1。
+int peek_body_code(const std::string& body) {
+    if (body.empty() || body[0] != '{') {
+        return -1;
+    }
+    const nlohmann::json j = nlohmann::json::parse(body, nullptr, false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("code") || !j["code"].is_number_integer()) {
+        return -1;
+    }
+    return j["code"].get<int>();
+}
+
+std::string peek_body_message(const std::string& body) {
+    if (body.empty() || body[0] != '{') {
+        return {};
+    }
+    const nlohmann::json j = nlohmann::json::parse(body, nullptr, false);
+    if (j.is_discarded() || !j.is_object() || !j.contains("message") || !j["message"].is_string()) {
+        return {};
+    }
+    return j["message"].get<std::string>();
+}
+
 }  // namespace
 
 namespace nloj::api {
 
 void register_http_routes(httplib::Server& svr) {
+    svr.set_logger([](const httplib::Request& req, const httplib::Response& res) {
+        if (req.method == "OPTIONS") {
+            return;
+        }
+        const std::string ip = request_client_ip(req);
+        const int biz = peek_body_code(res.body);
+        std::string line = req.method + " " + req.path
+            + " http=" + std::to_string(res.status)
+            + " ip=" + ip
+            + " bytes=" + std::to_string(res.body.size());
+        if (biz >= 0) {
+            line += " code=" + std::to_string(biz);
+            if (biz != 0) {
+                const std::string msg = peek_body_message(res.body);
+                if (!msg.empty()) {
+                    line += " msg=" + msg;
+                }
+            }
+        }
+        if (res.status >= 400 || (biz > 0)) {
+            nloj::common::log_warn(line);
+        } else {
+            nloj::common::log_info(line);
+        }
+    });
+
     svr.set_pre_routing_handler([](const httplib::Request& req, httplib::Response& res) {
         add_cors(res);
         if (req.method == "OPTIONS") {
@@ -688,11 +747,18 @@ int embed_judge_worker_enabled() {
 }
 
 void judge_worker_loop() {
+    nloj::common::log_info("embed judge worker started");
     for (;;) {
         nloj::common::JudgeTaskMessage task;
         nloj::common::wait_pop_judge_task(task);
+        nloj::common::log_info(
+            "judge task begin submissionId=" + std::to_string(task.submission_id)
+        );
         nloj::judge::run_judge_task(task.submission_id);
         nloj::common::ack_judge_task(task);
+        nloj::common::log_info(
+            "judge task end submissionId=" + std::to_string(task.submission_id)
+        );
     }
 }
 

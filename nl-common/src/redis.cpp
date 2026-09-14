@@ -1,5 +1,6 @@
 #include "nloj/common/redis.h"
 #include "nloj/common/config.h"
+#include "nloj/common/log.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,7 +17,6 @@
 
 #include <chrono>
 #include <cstring>
-#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -271,7 +271,7 @@ void ensure_backend() {
         g_use_redis = 1;
         g_was_up = 1;
         if (g_down_msg_printed) {
-            std::cout << "Redis reconnected, problem cache enabled" << std::endl;
+            log_info("Redis reconnected, problem cache enabled");
         }
         g_down_msg_printed = 0;
         return;
@@ -280,9 +280,9 @@ void ensure_backend() {
     g_retry_at = now + std::chrono::milliseconds(kReconnectCooldownMs);
     if (!g_down_msg_printed) {
         if (g_was_up) {
-            std::cout << "Redis connection lost, will auto-retry" << std::endl;
+            log_warn("Redis connection lost, will auto-retry");
         } else {
-            std::cout << "Redis unavailable, problem cache disabled" << std::endl;
+            log_warn("Redis unavailable, problem cache disabled");
         }
         g_down_msg_printed = 1;
     }
