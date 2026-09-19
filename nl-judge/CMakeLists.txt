@@ -1,5 +1,5 @@
 # 判题模块：消费 MQ、沙箱、比对、独立节点
-add_library(nl-judge src/module.cpp src/sandbox.cpp src/node.cpp src/language.cpp)
+add_library(nl-judge src/module.cpp src/sandbox.cpp src/node.cpp src/language.cpp src/load_balance.cpp)
 target_include_directories(nl-judge PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(nl-judge PUBLIC nl-common nl-submit nl-problem)
 
@@ -14,10 +14,16 @@ add_test(NAME judge_db COMMAND nloj_judge_db_test)
 add_executable(nloj_judge_language_test tests/test_language.cpp)
 target_link_libraries(nloj_judge_language_test PRIVATE nl-judge)
 add_test(NAME judge_language COMMAND nloj_judge_language_test)
+
+add_executable(nloj_judge_load_balance_test tests/test_load_balance.cpp)
+target_link_libraries(nloj_judge_load_balance_test PRIVATE nl-judge)
+add_test(NAME judge_load_balance COMMAND nloj_judge_load_balance_test)
 if(WIN32)
     get_filename_component(_nloj_mysql_lib_dir "${NLOJ_MYSQL_LIBRARY}" DIRECTORY)
     set_tests_properties(judge_db PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
     set_tests_properties(judge_language PROPERTIES
+        ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
+    set_tests_properties(judge_load_balance PROPERTIES
         ENVIRONMENT "PATH=${_nloj_mysql_lib_dir};$ENV{PATH}")
 endif()
